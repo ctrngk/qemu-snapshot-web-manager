@@ -1,0 +1,535 @@
+# QEMU Snapshot Web Manager — User Guide
+
+Welcome! This guide will walk you through everything you need to know to manage
+your virtual machine snapshots with a friendly web interface. No command-line
+wizardry required (well, maybe just a tiny bit to get started).
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Getting Started](#2-getting-started)
+3. [The Interface](#3-the-interface)
+4. [Managing Your VMs](#4-managing-your-vms)
+5. [Working with Snapshots](#5-working-with-snapshots)
+6. [Shared Folders](#6-shared-folders)
+7. [Tips & Best Practices](#7-tips--best-practices)
+8. [Troubleshooting](#8-troubleshooting)
+9. [Glossary](#9-glossary)
+
+---
+
+## 1. Introduction
+
+### What is QEMU Snapshot Web Manager?
+
+QEMU Snapshot Web Manager (QSWM) is a lightweight web tool that lets you create,
+view, and manage snapshots for your QEMU/KVM virtual machines — all from your
+web browser. Think of it as a control panel for your VMs' save points.
+
+### What are snapshots?
+
+A **snapshot** is like a save point in a video game. It captures the exact state
+of your virtual machine at a moment in time — what's on the disk, what programs
+are running, everything. If something goes wrong later, you can jump right back
+to that save point as if nothing happened.
+
+If you've used VirtualBox before, it's the same idea — but for QEMU/KVM virtual
+machines.
+
+### Why this tool?
+
+QEMU/KVM is powerful, but it doesn't come with a nice visual way to manage
+snapshots. You'd normally have to type commands in a terminal to create, list,
+or restore them. This tool gives you a clean web interface where you can see all
+your snapshots laid out as a tree, click buttons to create or restore them, and
+manage your VMs — no terminal commands needed after setup.
+
+---
+
+## 2. Getting Started
+
+### What you need
+
+- A **Linux computer** running QEMU/KVM virtual machines.
+  Tested on Fedora, Ubuntu, and Debian, but it should work on most Linux
+  distributions.
+- The **libvirt** service running (this is the software that talks to your VMs
+  behind the scenes — if you're already running VMs with `virt-manager`, you
+  have it).
+
+### Installation
+
+There are just three steps. You'll need to open a terminal for this part, but
+it's all copy-paste.
+
+#### Step 1: Install the required libraries
+
+These are small packages your system needs in order to build the program.
+
+**Fedora:**
+
+```bash
+sudo dnf install gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel
+```
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt-get install build-essential pkg-config libmicrohttpd-dev libvirt-dev libjansson-dev
+```
+
+> 💡 **What does this do?** It installs a few small software libraries that QSWM
+> needs. You only have to do this once.
+
+#### Step 2: Build and install the program
+
+Open a terminal, go to the project folder, and run:
+
+```bash
+make
+sudo make install
+```
+
+> 💡 **What does this do?** `make` compiles the source code into a program your
+> computer can run. `sudo make install` copies it to a system location so you
+> can run it from anywhere.
+
+#### Step 3: Start the server
+
+**Option A — Run it as a system service (recommended):**
+
+```bash
+sudo systemctl enable --now qemu-snapshot-web-manager
+```
+
+This starts the server immediately and makes it start automatically every time
+you reboot.
+
+**Option B — Run it manually:**
+
+```bash
+sudo ./build/qswm
+```
+
+> ⚠️ **Why `sudo`?** Managing virtual machines requires administrator access.
+> Without it, the tool can't talk to your VMs.
+
+#### Step 4: Open your browser
+
+Go to:
+
+```
+http://localhost:9091
+```
+
+That's it — you should see the QSWM interface with your virtual machines listed.
+It's that simple!
+
+<!-- Screenshot: Main interface showing all three panels with a VM selected -->
+
+---
+
+## 3. The Interface
+
+The interface is split into three panels, side by side. Here's what each one
+does:
+
+<!-- Screenshot: Overview of the 3-panel layout -->
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  🖥️  QEMU Snapshot Manager                                       │
+├────────────────┬─────────────────────────┬───────────────────────┤
+│                │                         │                       │
+│  Your Virtual  │    Snapshot Tree        │  Details & Actions    │
+│  Machines      │                         │                       │
+│                │    (visual diagram)     │  Snapshot info        │
+│  • VM 1  🟢    │                         │  Action buttons       │
+│  • VM 2  ⚫    │                         │                       │
+│  • VM 3  🟡    │                         │  ─────────────────    │
+│                │                         │  Shared Folders       │
+│                │                         │                       │
+└────────────────┴─────────────────────────┴───────────────────────┘
+```
+
+### Left Panel — Your Virtual Machines
+
+This panel lists every virtual machine on your system. Each VM shows:
+
+- Its **name**
+- A **colored status badge**:
+  - 🟢 **Green** = Running (the VM is on and active)
+  - ⚫ **Gray** = Shut off (the VM is powered down)
+  - 🟡 **Yellow** = Paused (the VM is frozen in place, like pressing pause)
+  - 🔴 **Red** = Crashed (something went wrong)
+- Its **vCPU count** and **memory** (e.g., "2 vCPUs · 4096 MB")
+
+**Click on a VM** to select it. This loads its snapshot tree in the center panel
+and its details on the right.
+
+There's also a **refresh button** (↻) at the top if you've just started or
+stopped a VM and the list hasn't updated yet.
+
+<!-- Screenshot: Left panel showing a list of VMs with different status badges -->
+
+### Center Panel — Snapshot Tree
+
+This is the main visual area. It shows all your snapshots as a **tree diagram**,
+with lines connecting parent snapshots to their children.
+
+- **Green circle** = Your current position (where the VM is right now)
+- **Gray circles** = Other snapshots you can go back to
+- **Dashed border** = An external snapshot (more on that later)
+- **Blue circle** = The snapshot you've clicked on / selected
+
+You can interact with the tree:
+
+- **Click** a snapshot to see its details in the right panel
+- **Scroll** the mouse wheel to zoom in and out
+- **Click and drag** on empty space to pan around
+- **Double-click** on empty space to reset the view (zoom to fit)
+- **Hover** over a snapshot to see a quick tooltip with its name, date, and type
+
+If there are no snapshots yet, you'll see a friendly message inviting you to
+create your first one.
+
+<!-- Screenshot: Snapshot tree showing several connected snapshots with the current one highlighted green -->
+
+### Right Panel — Details & Actions
+
+When you select a snapshot from the tree, this panel shows:
+
+- **Snapshot name** (as a heading)
+- **Type badge**: "Internal" (blue) or "External" (purple)
+- **Date created**
+- **Description** (if you wrote one when creating the snapshot)
+- Whether it's the **current** snapshot (marked with a ☆ star)
+
+Below the details, you'll find **action buttons** — these let you revert to,
+delete, or merge the snapshot. We'll cover those in detail in
+[Section 5](#5-working-with-snapshots).
+
+At the very bottom of this panel, you'll see the **Shared Folders** section,
+which lists any folders shared between your host computer and the selected VM.
+
+<!-- Screenshot: Right panel showing snapshot details with action buttons and shared folders -->
+
+---
+
+## 4. Managing Your VMs
+
+You can control your virtual machines directly from the interface. Select a VM
+from the left panel, and you'll see control buttons.
+
+### Starting a VM
+
+1. Click the VM in the left panel.
+2. Click **Start**.
+3. The status badge will turn green once the VM is running.
+
+> 💡 **What does "running" mean?** The VM is powered on and active — just like
+> turning on a computer. You can connect to it with a viewer like `virt-manager`
+> or a VNC client.
+
+### Stopping a VM
+
+1. Select the VM.
+2. Click **Stop**.
+3. The status badge will turn gray.
+
+> 💡 **What does "shut off" mean?** The VM is powered down, like turning off a
+> computer. Nothing is running, but all your files are still saved on the
+> virtual disk.
+
+### Pausing a VM
+
+1. Select the VM.
+2. Click **Pause**.
+3. The status badge will turn yellow.
+
+> 💡 **What does "paused" mean?** The VM is frozen in time. Everything stops
+> exactly where it is — programs, downloads, everything. When you start it
+> again, it picks up right where it left off. Think of it like pressing pause
+> on a movie.
+
+---
+
+## 5. Working with Snapshots
+
+This is the heart of the tool. Here's how to create, view, restore, delete, and
+merge snapshots.
+
+### Creating a Snapshot
+
+1. Select your VM from the left panel.
+2. Click the **"+ New Snapshot"** button at the top of the snapshot tree area.
+3. A form will appear. Fill in:
+   - **Name** (required): Give it a meaningful name, like
+     `before-system-update` or `clean-install`.
+   - **Description** (optional): A note to remind yourself what this snapshot is
+     for.
+   - **Type**: Choose from the dropdown:
+     - **Internal (memory + disk state)** — Saves everything inside one file.
+       Simple, safe, and the best choice for most users.
+     - **External (disk-only, requires merge)** — Creates a separate file for
+       the changes. More advanced. Can be done while the VM is running without
+       pausing it.
+4. Click **Create**.
+
+Your new snapshot will appear in the tree, connected to the previous snapshot.
+
+<!-- Screenshot: Create snapshot form with name, description, and type fields -->
+
+> 💡 **Which type should I pick?** If you're not sure, choose **Internal**. It
+> keeps things simple — everything is stored in one place and you don't have to
+> worry about merging later.
+
+### Viewing the Snapshot Tree
+
+The tree in the center panel shows the history of your snapshots and how they
+relate to each other.
+
+- Each **circle** is a snapshot.
+- **Lines** between circles show parent-child relationships (which snapshot came
+  from which).
+- The **green circle** is where your VM currently is.
+- **Gray circles** are older snapshots you can go back to.
+- **Dashed borders** indicate external snapshots.
+
+You can navigate the tree:
+
+| Action | How |
+|---|---|
+| Select a snapshot | Click on it |
+| Zoom in / out | Mouse scroll wheel |
+| Pan around | Click and drag on empty space |
+| Reset the view | Double-click on empty space |
+| Quick info | Hover over a snapshot |
+
+<!-- Screenshot: Snapshot tree with annotations pointing out green (current), gray (other), and dashed (external) nodes -->
+
+### Reverting to a Snapshot
+
+Reverting means "go back in time" to a previous save point.
+
+1. Click on a snapshot in the tree.
+2. In the right panel, click **"↩ Revert"**.
+3. A confirmation dialog will appear. Click OK to confirm.
+
+Your VM will be restored to exactly the state it was in when that snapshot was
+taken.
+
+> ⚠️ **Warning:** Reverting will discard your VM's current state. Any unsaved
+> work inside the VM — open documents, downloads in progress, anything not in a
+> snapshot — will be lost. Make sure to save your work or create a new snapshot
+> first if you want to keep your current state.
+
+<!-- Screenshot: Revert confirmation dialog -->
+
+### Deleting a Snapshot
+
+1. Click on a snapshot in the tree.
+2. In the right panel, click **"🗑 Delete"**.
+3. Confirm the action.
+
+The snapshot will be removed from the tree.
+
+> 💡 **Don't worry** — deleting a snapshot does **not** affect your VM's current
+> state. It just removes that save point. Your VM keeps running (or stays off)
+> exactly as it was. Think of it like erasing a save file in a game — the game
+> itself isn't affected.
+
+<!-- Screenshot: Delete confirmation dialog -->
+
+### Merging External Snapshots
+
+This option only appears for **external snapshots** (the ones with a dashed
+border in the tree).
+
+1. Click on an external snapshot in the tree.
+2. In the right panel, click **"⊕ Merge"**.
+3. Confirm the action.
+
+> 💡 **What does merging do?** When you create external snapshots, each one
+> creates a new file that stores just the changes since the last snapshot. Over
+> time, you can end up with a chain of these files. Merging combines a
+> snapshot's changes back into the main disk file. This simplifies the snapshot
+> chain and can free up disk space.
+>
+> Think of it like this: instead of having a notebook full of sticky-note edits,
+> merging writes all the edits neatly into the notebook itself.
+
+> ⚠️ **Important:** The VM should be **shut off** before merging. If the VM is
+> running, the merge may fail. Stop the VM first, then merge.
+
+<!-- Screenshot: Merge button visible on an external snapshot's detail panel -->
+
+---
+
+## 6. Shared Folders
+
+### What are shared folders?
+
+**Shared folders** let your virtual machine access files that live on your real
+(host) computer. It's like a bridge between the two — you put files in a folder
+on your host, and the VM can see them too.
+
+### How they appear in QSWM
+
+The tool automatically detects shared folders that use **virtiofs** (a fast
+file-sharing technology for VMs). You'll find them in the **right panel** under
+the "Shared Folders" heading, below the snapshot details.
+
+For each shared folder, you'll see:
+
+- **Mount tag** — The name the VM uses to find the folder (like a label).
+- **Source path** — The actual folder location on your host computer
+  (e.g., `/home/you/shared`).
+- **Read-only status** — Whether the VM can only read files, or read and write
+  them.
+
+<!-- Screenshot: Shared folders section in the right panel showing mount tags and paths -->
+
+> ⚠️ **Note:** This tool **shows** shared folders but doesn't create them. To
+> set up new shared folders for a VM, use **virt-manager** (the graphical VM
+> manager) or the `virsh` command-line tool.
+
+---
+
+## 7. Tips & Best Practices
+
+✅ **Take snapshots before big changes.** About to install a major software
+update? Upgrade your operating system? Try something risky? Create a snapshot
+first. If anything goes wrong, you can jump right back.
+
+✅ **Use meaningful names.** Name your snapshots something descriptive like
+`before-upgrade-to-fedora-44` or `clean-install-with-dev-tools` instead of
+`snap1` or `test`. Future-you will thank present-you.
+
+✅ **Stick with internal snapshots unless you need live snapshots.** Internal
+snapshots are simpler — everything lives in one file, and you don't need to
+worry about merging. Only use external snapshots if you need to take a snapshot
+while the VM is actively running.
+
+✅ **Clean up old snapshots.** Snapshots take up disk space. If you have save
+points you'll never go back to, delete them to reclaim space.
+
+✅ **Keep your snapshot tree shallow.** A long chain of snapshots on top of
+snapshots can slow things down. Try to keep it simple — branch only when you
+need to, and merge or delete branches you're done with.
+
+✅ **Shut down the VM before merging.** External snapshot merges work best (and
+most reliably) when the VM is powered off.
+
+---
+
+## 8. Troubleshooting
+
+### "No virtual machines found"
+
+The tool can't see any VMs. This usually means the libvirt service isn't
+running.
+
+**Fix:** Start libvirt:
+
+```bash
+sudo systemctl start libvirtd
+```
+
+To make it start automatically on boot:
+
+```bash
+sudo systemctl enable libvirtd
+```
+
+### "Failed to connect to libvirt"
+
+The tool can't communicate with the libvirt service.
+
+**Fix:** Make sure you're running the tool with `sudo`:
+
+```bash
+sudo ./build/qswm
+```
+
+Or if using the system service, check that it's running:
+
+```bash
+sudo systemctl status qemu-snapshot-web-manager
+```
+
+### The web page won't load
+
+You go to `http://localhost:9091` and nothing shows up.
+
+**Fix:**
+
+1. Make sure the server is actually running:
+   ```bash
+   sudo systemctl status qemu-snapshot-web-manager
+   ```
+   Or, if running manually, check that the terminal is still open with `qswm`
+   running.
+
+2. Double-check the port. The default is **9091**. If you changed it with the
+   `--port` option, use that port in your browser instead.
+
+3. Make sure nothing else is using port 9091:
+   ```bash
+   sudo ss -tlnp | grep 9091
+   ```
+
+### Snapshot operations fail
+
+Some snapshot operations require the VM to be in a certain state.
+
+**Fix:**
+
+- **Creating an internal snapshot**: The VM may need to be paused or shut off.
+  Try shutting down the VM first.
+- **Reverting**: Works in most states, but if it fails, try stopping the VM
+  first, then reverting.
+- **Merging**: The VM **must** be shut off. Stop the VM, then try again.
+
+### External snapshot merge fails
+
+**Fix:**
+
+1. Make sure the VM is **shut off** (not just paused — fully stopped).
+2. Check that you have enough free disk space. Merging needs room to combine
+   the files.
+3. Check that the disk files haven't been moved or renamed outside of libvirt.
+
+### The snapshot tree looks empty
+
+If you select a VM and the tree area is blank:
+
+- You might not have any snapshots yet! Click **"+ New Snapshot"** to create
+  your first one.
+- If you know you have snapshots, try clicking the refresh button or
+  reloading the page.
+
+---
+
+## 9. Glossary
+
+| Term | What it means |
+|---|---|
+| **VM (Virtual Machine)** | A simulated computer running inside your real computer. It has its own operating system, files, and programs — but it all lives in a file on your host machine. |
+| **Snapshot** | A save point for a VM. It captures the VM's state at a moment in time so you can return to it later. |
+| **Internal snapshot** | A snapshot where everything (disk and memory) is saved inside a single file. Simple and self-contained. Best for most users. |
+| **External snapshot** | A snapshot that creates a separate overlay file for disk changes only. Can be taken while the VM is running. Needs to be merged later to clean up. |
+| **Merge** | The process of combining an external snapshot's changes back into the main disk file. Simplifies the file chain and can free up disk space. |
+| **Revert** | Going back to a previous snapshot. Restores the VM to the exact state it was in when that snapshot was taken. |
+| **virtiofs** | A fast file-sharing technology that lets a VM access folders on the host computer. |
+| **libvirt** | The software layer that manages your VMs behind the scenes. Tools like `virt-manager` and QSWM talk to libvirt, and libvirt talks to QEMU. |
+| **QEMU** | The emulator/virtualizer that actually runs your virtual machines. It does the heavy lifting of simulating hardware. |
+| **KVM** | A Linux feature that lets QEMU run VMs much faster by using your processor's built-in virtualization support. QEMU + KVM together give you near-native performance. |
+| **Host** | Your real, physical computer — the one running the VMs. |
+| **Guest** | The virtual machine itself — the simulated computer running inside the host. |
+
+---
+
+*Happy snapshotting!* 🎉

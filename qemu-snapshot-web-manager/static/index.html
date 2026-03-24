@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QEMU Snapshot Manager</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>🖥️ QEMU Snapshot Manager</h1>
+            <div class="header-status">
+                <span id="backend-status"
+                      hx-get="/api/ping"
+                      hx-trigger="load"
+                      hx-swap="innerHTML">
+                    connecting...
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="layout">
+        <!-- Left Panel: VM List -->
+        <aside class="panel vm-panel">
+            <div class="panel-header">
+                <h2>Virtual Machines</h2>
+                <button class="btn btn-sm btn-ghost"
+                        hx-get="/api/vms"
+                        hx-target="#vm-list"
+                        hx-swap="innerHTML"
+                        title="Refresh">
+                    ↻
+                </button>
+            </div>
+            <div id="vm-list"
+                 hx-get="/api/vms"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <p class="placeholder">Loading VMs...</p>
+            </div>
+        </aside>
+
+        <!-- Center Panel: Snapshot Tree -->
+        <section class="panel tree-panel">
+            <div class="panel-header">
+                <h2>Snapshot Tree</h2>
+                <div id="tree-toolbar" class="toolbar" style="display:none;">
+                    <button id="btn-create-snap" class="btn btn-sm btn-primary"
+                            hx-get=""
+                            hx-target="#modal-container"
+                            hx-swap="innerHTML">
+                        + New Snapshot
+                    </button>
+                </div>
+            </div>
+            <div id="snapshot-tree" class="tree-container">
+                <p class="placeholder">Select a VM to view snapshots</p>
+            </div>
+        </section>
+
+        <!-- Right Panel: Details & Actions -->
+        <aside class="panel detail-panel">
+            <div class="panel-header">
+                <h2>Details</h2>
+            </div>
+
+            <div id="snapshot-detail" class="detail-section">
+                <p class="placeholder">Select a snapshot for details</p>
+            </div>
+
+            <div class="panel-header" style="margin-top: 1em;">
+                <h2>Shared Folders</h2>
+                <button id="btn-add-folder" class="btn btn-sm btn-primary"
+                        hx-get=""
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML"
+                        style="display:none;">
+                    + Add Folder
+                </button>
+            </div>
+            <div id="shared-folders" class="detail-section">
+                <p class="placeholder">Select a VM</p>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Modal container for create snapshot form, confirmations, etc. -->
+    <div id="modal-container"></div>
+
+    <!-- Toast notifications -->
+    <div id="toast-container"></div>
+
+    <!-- D3.js tree visualization script (Task 11 will create this) -->
+    <script src="/tree.js"></script>
+
+    <!-- Global HTMX event handlers -->
+    <script>
+        // Show toast on successful actions
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            // Handle HX-Trigger response headers for toast notifications
+        });
+
+        // Handle errors
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            showToast('Request failed: ' + evt.detail.xhr.status, 'error');
+        });
+
+        function showToast(message, type) {
+            var toast = document.createElement('div');
+            toast.className = 'toast toast-' + (type || 'info');
+            toast.textContent = message;
+            document.getElementById('toast-container').appendChild(toast);
+            setTimeout(function() { toast.remove(); }, 4000);
+        }
+
+        // Select a VM — load its snapshots and shared folders
+        function selectVm(vmName) {
+            // Remove active class from all VM items
+            document.querySelectorAll('.vm-item').forEach(function(el) {
+                el.classList.remove('active');
+            });
+            // Add active class to selected
+            var selected = document.querySelector('.vm-item[data-vm="' + vmName + '"]');
+            if (selected) selected.classList.add('active');
+
+            // Update the create snapshot button
+            var toolbar = document.getElementById('tree-toolbar');
+            toolbar.style.display = 'flex';
+            var btn = document.getElementById('btn-create-snap');
+            btn.setAttribute('hx-get', '/api/vms/' + vmName + '/snapshots/form');
+            htmx.process(btn);
+
+            // Load snapshot tree (JSON for D3.js)
+            if (typeof loadSnapshotTree === 'function') {
+                loadSnapshotTree(vmName);
+            } else {
+                // Fallback if tree.js not loaded yet
+                document.getElementById('snapshot-tree').innerHTML =
+                    '<p class="placeholder">Tree visualization loading...</p>';
+            }
+
+            // Load shared folders via HTMX
+            htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
+                target: '#shared-folders', swap: 'innerHTML'
+            });
+
+            // Show and update the add-folder button
+            var folderBtn = document.getElementById('btn-add-folder');
+            folderBtn.style.display = 'inline-flex';
+            folderBtn.setAttribute('hx-get', '/api/vms/' + vmName + '/shared-folders/form');
+            htmx.process(folderBtn);
+
+            // Store current VM
+            window.currentVm = vmName;
+        }
+
+        // Refresh shared folders list when folders are added/removed
+        document.body.addEventListener('sharedFoldersChanged', function() {
+            if (window.currentVm) {
+                htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
+                    target: '#shared-folders', swap: 'innerHTML'
+                });
+            }
+        });
+
+        function openDirBrowser() {
+            // Remove any existing browser
+            var existing = document.getElementById('dir-browser-modal');
+            if (existing) existing.remove();
+
+            // Create modal
+            var modal = document.createElement('div');
+            modal.id = 'dir-browser-modal';
+            modal.className = 'modal-overlay';
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            modal.innerHTML = '<div class="modal" onclick="event.stopPropagation()">' +
+                '<h3>Select Directory</h3>' +
+                '<div id="dir-browser-content">Loading...</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+
+            // Load initial directory
+            htmx.ajax('GET', '/api/browse', {target: '#dir-browser-content', swap: 'innerHTML'});
+        }
+
+        function selectDirectory(path) {
+            document.getElementById('sf-source-dir').value = path;
+            // Trigger the auto-tag generation
+            var p = path.replace(/\/$/, '');
+            var n = p.split('/').pop() || 'share';
+            document.getElementById('sf-mount-tag').value = 'sf_' + n.replace(/[^a-zA-Z0-9_-]/g, '_');
+            // Close the modal
+            var modal = document.getElementById('dir-browser-modal');
+            if (modal) modal.remove();
+        }
+    </script>
+</body>
+</html>
