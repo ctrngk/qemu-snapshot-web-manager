@@ -1,0 +1,39 @@
+#ifndef HTML_RENDER_H
+#define HTML_RENDER_H
+
+#include "vm_backend.h"
+
+/* Render the VM list as clickable items for the left panel.
+ * Each item triggers selectVm(name) on click and loads snapshot tree.
+ * Returns malloc'd HTML string. */
+char *render_vm_list(vm_info_t **vms, int count);
+
+/* Render snapshot detail panel for a selected snapshot.
+ * Includes revert/delete/merge action buttons with HTMX attributes.
+ * vm_name is needed to construct the API URLs.
+ * Returns malloc'd HTML string. */
+char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap);
+
+/* Render the create-snapshot form (shown in modal or detail panel).
+ * Returns malloc'd HTML string. */
+char *render_create_snapshot_form(const char *vm_name);
+
+/* Render the shared folders list.
+ * Returns malloc'd HTML string. */
+char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count);
+
+/* Render the add-shared-folder form.
+ * Returns malloc'd HTML string. */
+char *render_add_shared_folder_form(const char *vm_name);
+
+/* Render a success message. Returns malloc'd HTML string. */
+char *render_success(const char *message);
+
+/* Render an error message. Returns malloc'd HTML string. */
+char *render_error(const char *message);
+
+/* Render a directory browser listing for the browse modal.
+ * Returns malloc'd HTML string. */
+char *render_directory_listing(const char *current_path, char **entries, int count);
+
+#endif

@@ -1,0 +1,23 @@
+[Unit]
+Description=QEMU Snapshot Web Manager
+Documentation=https://github.com/user/qemu-snapshot-web-manager
+After=libvirtd.service network.target
+Wants=libvirtd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/qswm --port 9091 --static-dir /usr/local/share/qswm/static
+Restart=on-failure
+RestartSec=5
+User=root
+Environment=HOME=/root
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/var/lib/libvirt
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,572 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+
+#include "html_render.h"
+#include "util.h"
+
+/* ------------------------------------------------------------------ */
+/*  HTML-escape helper: escapes <, >, &, " in user-provided strings   */
+/* ------------------------------------------------------------------ */
+
+static char *html_escape(const char *raw)
+{
+    if (!raw)
+        return str_dup("");
+
+    /* worst case: every char becomes &quot; (6 chars) */
+    size_t len = strlen(raw);
+    size_t alloc = len * 6 + 1;
+    char *out = malloc(alloc);
+    if (!out)
+        return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        switch (raw[i]) {
+        case '<':  memcpy(out + j, "&lt;",   4); j += 4; break;
+        case '>':  memcpy(out + j, "&gt;",   4); j += 4; break;
+        case '&':  memcpy(out + j, "&amp;",  5); j += 5; break;
+        case '"':  memcpy(out + j, "&quot;", 6); j += 6; break;
+        case '\'': memcpy(out + j, "&#39;",  5); j += 5; break;
+        default:   out[j++] = raw[i]; break;
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Simple string builder                                             */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    char  *buf;
+    size_t len;
+    size_t cap;
+} strbuf_t;
+
+static void sb_init(strbuf_t *sb, size_t initial)
+{
+    sb->cap = initial ? initial : 4096;
+    sb->buf = malloc(sb->cap);
+    sb->len = 0;
+    if (sb->buf)
+        sb->buf[0] = '\0';
+}
+
+static void sb_append(strbuf_t *sb, const char *s)
+{
+    if (!sb->buf || !s) return;
+    size_t slen = strlen(s);
+    if (sb->len + slen + 1 > sb->cap) {
+        size_t new_cap = (sb->len + slen + 1) * 2;
+        char *tmp = realloc(sb->buf, new_cap);
+        if (!tmp) return;
+        sb->buf = tmp;
+        sb->cap = new_cap;
+    }
+    memcpy(sb->buf + sb->len, s, slen);
+    sb->len += slen;
+    sb->buf[sb->len] = '\0';
+}
+
+/* Append a formatted string. Uses a temporary buffer. */
+static void sb_appendf(strbuf_t *sb, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+
+static void sb_appendf(strbuf_t *sb, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int needed = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (needed < 0) return;
+
+    /* ensure capacity */
+    size_t required = sb->len + (size_t)needed + 1;
+    if (required > sb->cap) {
+        size_t new_cap = required * 2;
+        char *tmp = realloc(sb->buf, new_cap);
+        if (!tmp) return;
+        sb->buf = tmp;
+        sb->cap = new_cap;
+    }
+
+    va_start(ap, fmt);
+    vsnprintf(sb->buf + sb->len, (size_t)needed + 1, fmt, ap);
+    va_end(ap);
+    sb->len += (size_t)needed;
+}
+
+/* Return the built string (caller owns it). Invalidates the builder. */
+static char *sb_finish(strbuf_t *sb)
+{
+    char *result = sb->buf;
+    sb->buf = NULL;
+    sb->len = sb->cap = 0;
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  URL-encode helper for path strings                                */
+/* ------------------------------------------------------------------ */
+
+static char *url_encode(const char *s)
+{
+    /* Allocate worst case: every char becomes %XX */
+    size_t len = strlen(s);
+    char *out = malloc(len * 3 + 1);
+    if (!out) return strdup(s);
+
+    char *p = out;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '/' || c == '-' ||
+            c == '_' || c == '.' || c == '~') {
+            *p++ = c;
+        } else {
+            snprintf(p, 4, "%%%02X", c);
+            p += 3;
+        }
+    }
+    *p = '\0';
+    return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  State to CSS class mapping                                        */
+/* ------------------------------------------------------------------ */
+
+static const char *state_css_class(vm_state_t s)
+{
+    switch (s) {
+    case VM_RUNNING: return "state-running";
+    case VM_PAUSED:  return "state-paused";
+    case VM_SHUTOFF: return "state-shutoff";
+    case VM_OTHER:   return "state-other";
+    default:         return "state-other";
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_vm_list                                                    */
+/* ------------------------------------------------------------------ */
+
+char *render_vm_list(vm_info_t **vms, int count)
+{
+    if (!vms || count <= 0)
+        return str_dup("<p class=\"placeholder\">No virtual machines found</p>");
+
+    strbuf_t sb;
+    sb_init(&sb, (size_t)count * 512);
+
+    for (int i = 0; i < count; i++) {
+        vm_info_t *vm = vms[i];
+        if (!vm) continue;
+
+        char *esc_name = html_escape(vm->name);
+        const char *state_str = vm_state_str(vm->state);
+        const char *state_cls = state_css_class(vm->state);
+        unsigned long mem_mb = vm->memory_kb / 1024;
+
+        sb_appendf(&sb,
+            "<div class=\"vm-item\" data-vm=\"%s\" onclick=\"selectVm('%s')\">\n"
+            "    <div class=\"vm-name\">%s</div>\n"
+            "    <div class=\"vm-meta\">\n"
+            "        <span class=\"vm-state %s\">%s</span>\n"
+            "        <span class=\"vm-info\">%d vCPU · %lu MB</span>\n"
+            "    </div>\n"
+            "</div>\n",
+            esc_name, esc_name, esc_name,
+            state_cls, state_str,
+            vm->vcpus, mem_mb);
+
+        free(esc_name);
+    }
+
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_snapshot_detail                                            */
+/* ------------------------------------------------------------------ */
+
+char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
+{
+    if (!snap)
+        return str_dup("<p class=\"placeholder\">Snapshot not found</p>");
+
+    char *esc_vm   = html_escape(vm_name);
+    char *esc_id   = html_escape(snap->id);
+    char *esc_desc = html_escape(snap->description);
+    char *esc_time = html_escape(snap->creation_time);
+
+    const char *badge_cls  = (snap->type == SNAP_INTERNAL) ? "badge-internal" : "badge-external";
+    const char *badge_text = (snap->type == SNAP_INTERNAL) ? "Internal" : "External";
+
+    strbuf_t sb;
+    sb_init(&sb, 4096);
+
+    sb_append(&sb, "<div class=\"snapshot-info\">\n");
+    sb_appendf(&sb, "    <h3>%s</h3>\n", esc_id);
+    sb_append(&sb, "    <div class=\"snapshot-meta\">\n");
+    sb_appendf(&sb, "        <span class=\"badge %s\">%s</span>\n", badge_cls, badge_text);
+    sb_appendf(&sb, "        <span class=\"snap-date\">%s</span>\n", esc_time);
+    sb_append(&sb, "    </div>\n");
+    sb_appendf(&sb, "    <p class=\"snap-desc\">%s</p>\n", esc_desc);
+
+    if (snap->is_current) {
+        sb_append(&sb,
+            "    <div class=\"snap-current\">\xe2\x98\x85 Current Snapshot</div>\n");
+    }
+
+    sb_append(&sb, "    <div class=\"snap-actions\">\n");
+
+    /* Revert button */
+    sb_appendf(&sb,
+        "        <button class=\"btn btn-primary\"\n"
+        "                hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
+        "                hx-target=\"#snapshot-tree\"\n"
+        "                hx-swap=\"innerHTML\"\n"
+        "                hx-confirm=\"Revert to snapshot '%s'? This will discard current state.\">\n"
+        "            \xe2\x86\xa9 Revert\n"
+        "        </button>\n",
+        esc_vm, esc_id, esc_id);
+
+    /* Delete button */
+    sb_appendf(&sb,
+        "        <button class=\"btn btn-danger\"\n"
+        "                hx-delete=\"/api/vms/%s/snapshots/%s\"\n"
+        "                hx-target=\"#snapshot-tree\"\n"
+        "                hx-swap=\"innerHTML\"\n"
+        "                hx-confirm=\"Delete snapshot '%s'?\">\n"
+        "            \xf0\x9f\x97\x91 Delete\n"
+        "        </button>\n",
+        esc_vm, esc_id, esc_id);
+
+    /* Merge button (only for external snapshots) */
+    if (snap->type == SNAP_EXTERNAL) {
+        sb_appendf(&sb,
+            "        <button class=\"btn btn-warning\"\n"
+            "                hx-post=\"/api/vms/%s/snapshots/%s/merge\"\n"
+            "                hx-target=\"#snapshot-tree\"\n"
+            "                hx-swap=\"innerHTML\"\n"
+            "                hx-confirm=\"Merge snapshot '%s'?\">\n"
+            "            \xe2\x8a\x95 Merge\n"
+            "        </button>\n",
+            esc_vm, esc_id, esc_id);
+    }
+
+    sb_append(&sb, "    </div>\n");
+    sb_append(&sb, "</div>\n");
+
+    free(esc_vm);
+    free(esc_id);
+    free(esc_desc);
+    free(esc_time);
+
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_create_snapshot_form                                       */
+/* ------------------------------------------------------------------ */
+
+char *render_create_snapshot_form(const char *vm_name)
+{
+    char *esc_vm = html_escape(vm_name);
+
+    strbuf_t sb;
+    sb_init(&sb, 4096);
+
+    sb_append(&sb, "<div class=\"modal-overlay\" onclick=\"this.remove()\">\n");
+    sb_append(&sb, "    <div class=\"modal\" onclick=\"event.stopPropagation()\">\n");
+    sb_append(&sb, "        <h3>Create Snapshot</h3>\n");
+    sb_appendf(&sb,
+        "        <form hx-post=\"/api/vms/%s/snapshots\"\n"
+        "              hx-target=\"#snapshot-tree\"\n"
+        "              hx-swap=\"innerHTML\"\n"
+        "              hx-on::after-request=\"this.closest('.modal-overlay').remove()\">\n",
+        esc_vm);
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Name</label>\n"
+        "                <input class=\"form-input\" name=\"name\" placeholder=\"snapshot-name\" required>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Description</label>\n"
+        "                <textarea class=\"form-input\" name=\"description\" rows=\"3\" \n"
+        "                          placeholder=\"Optional description\"></textarea>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Type</label>\n"
+        "                <select class=\"form-select\" name=\"type\">\n"
+        "                    <option value=\"internal\">Internal (memory + disk state)</option>\n"
+        "                    <option value=\"external\">External (disk-only, requires merge)</option>\n"
+        "                </select>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-actions\">\n"
+        "                <button type=\"submit\" class=\"btn btn-primary\">Create</button>\n"
+        "                <button type=\"button\" class=\"btn btn-ghost\" \n"
+        "                        onclick=\"this.closest('.modal-overlay').remove()\">Cancel</button>\n"
+        "            </div>\n");
+    sb_append(&sb, "        </form>\n");
+    sb_append(&sb, "    </div>\n");
+    sb_append(&sb, "</div>\n");
+
+    free(esc_vm);
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_shared_folders                                             */
+/* ------------------------------------------------------------------ */
+
+char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count)
+{
+    if (!folders || count <= 0)
+        return str_dup("<p class=\"placeholder\">No shared folders configured</p>");
+
+    char *esc_vm = html_escape(vm_name);
+
+    strbuf_t sb;
+    sb_init(&sb, (size_t)count * 512);
+
+    sb_append(&sb, "<div class=\"shared-folders-list\">\n");
+
+    for (int i = 0; i < count; i++) {
+        char *esc_tag  = html_escape(folders[i].mount_tag);
+        char *esc_path = html_escape(folders[i].source_dir);
+
+        sb_append(&sb, "    <div class=\"folder-item\">\n");
+        sb_appendf(&sb, "        <div class=\"folder-icon\">\xf0\x9f\x93\x81</div>\n");
+        sb_append(&sb, "        <div class=\"folder-info\">\n");
+        sb_appendf(&sb, "            <div class=\"folder-tag\">%s</div>\n", esc_tag);
+        sb_appendf(&sb, "            <div class=\"folder-path\">%s</div>\n", esc_path);
+        if (folders[i].read_only) {
+            sb_append(&sb, "            <span class=\"badge badge-readonly\">Read Only</span>\n");
+        }
+
+        /* Mount instructions */
+        const char *ftype = folders[i].fs_type ? folders[i].fs_type : "virtiofs";
+        if (strcmp(ftype, "9p") == 0) {
+            sb_appendf(&sb,
+                "            <div class=\"folder-mount-hint\">"
+                "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t 9p -o trans=virtio %s /mnt/%s</code></div>\n",
+                esc_tag, esc_tag, esc_tag);
+        } else {
+            sb_appendf(&sb,
+                "            <div class=\"folder-mount-hint\">"
+                "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t virtiofs %s /mnt/%s</code></div>\n",
+                esc_tag, esc_tag, esc_tag);
+        }
+
+        sb_append(&sb, "        </div>\n");
+        sb_appendf(&sb,
+            "        <div class=\"folder-actions\">\n"
+            "            <button class=\"btn btn-sm btn-success\"\n"
+            "                    hx-post=\"/api/vms/%s/shared-folders/%s/mount\"\n"
+            "                    hx-target=\"#shared-folders\"\n"
+            "                    hx-swap=\"innerHTML\"\n"
+            "                    hx-confirm=\"Mount %s inside the guest VM?\"\n"
+            "                    title=\"Mount inside guest via QEMU Guest Agent\">\n"
+            "                \xe2\xac\x86\xef\xb8\x8f Mount\n"
+            "            </button>\n"
+            "            <button class=\"btn btn-sm btn-warning\"\n"
+            "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
+            "                    hx-target=\"#shared-folders\"\n"
+            "                    hx-swap=\"innerHTML\"\n"
+            "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
+            "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
+            "                \xe2\xac\x87\xef\xb8\x8f Unmount\n"
+            "            </button>\n",
+            esc_vm, esc_tag, esc_tag,
+            esc_vm, esc_tag, esc_tag);
+        sb_appendf(&sb,
+            "        <button class=\"btn btn-sm btn-danger\"\n"
+            "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
+            "                hx-target=\"#shared-folders\"\n"
+            "                hx-swap=\"innerHTML\"\n"
+            "                hx-confirm=\"Remove shared folder '%s'?\">\n"
+            "            \xf0\x9f\x97\x91\n"
+            "        </button>\n",
+            esc_vm, esc_tag, esc_tag);
+        sb_append(&sb, "        </div>\n");
+        sb_append(&sb, "    </div>\n");
+
+        free(esc_tag);
+        free(esc_path);
+    }
+
+    sb_append(&sb, "</div>\n");
+    free(esc_vm);
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_add_shared_folder_form                                     */
+/* ------------------------------------------------------------------ */
+
+char *render_add_shared_folder_form(const char *vm_name)
+{
+    char *esc_vm = html_escape(vm_name);
+
+    strbuf_t sb;
+    sb_init(&sb, 4096);
+
+    sb_append(&sb, "<div class=\"modal-overlay\" onclick=\"this.remove()\">\n");
+    sb_append(&sb, "    <div class=\"modal\" onclick=\"event.stopPropagation()\">\n");
+    sb_append(&sb, "        <h3>Add Shared Folder</h3>\n");
+    sb_appendf(&sb,
+        "        <form hx-post=\"/api/vms/%s/shared-folders\"\n"
+        "              hx-target=\"#shared-folders\"\n"
+        "              hx-swap=\"innerHTML\"\n"
+        "              hx-on::after-request=\"this.closest('.modal-overlay').remove()\">\n",
+        esc_vm);
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Source Directory (host path)</label>\n"
+        "                <div class=\"input-with-button\">\n"
+        "                    <input class=\"form-input\" name=\"source_dir\" id=\"sf-source-dir\"\n"
+        "                           placeholder=\"/home/user/Documents\" required\n"
+        "                           oninput=\"var p=this.value.replace(/\\/$/,''); "
+        "var n=p.split('/').pop()||'share'; "
+        "document.getElementById('sf-mount-tag').value='sf_'+n.replace(/[^a-zA-Z0-9_-]/g,'_');\">\n"
+        "                    <button type=\"button\" class=\"btn btn-sm\" onclick=\"openDirBrowser()\">Browse...</button>\n"
+        "                </div>\n"
+        "                <small class=\"form-hint\">Full path on the host machine (e.g. /home/user/Downloads)</small>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Mount Tag</label>\n"
+        "                <input class=\"form-input\" name=\"mount_tag\" id=\"sf-mount-tag\"\n"
+        "                       placeholder=\"sf_Downloads\" required>\n"
+        "                <small class=\"form-hint\">Auto-generated from directory name. Used to mount inside VM.</small>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">Filesystem Type</label>\n"
+        "                <select class=\"form-select\" name=\"fs_type\">\n"
+        "                    <option value=\"virtiofs\">virtiofs</option>\n"
+        "                    <option value=\"9p\">9p</option>\n"
+        "                </select>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-group\">\n"
+        "                <label class=\"form-label\">\n"
+        "                    <input type=\"checkbox\" name=\"read_only\" value=\"1\"> Read Only\n"
+        "                </label>\n"
+        "            </div>\n");
+    sb_append(&sb,
+        "            <div class=\"form-actions\">\n"
+        "                <button type=\"submit\" class=\"btn btn-primary\">Add Folder</button>\n"
+        "                <button type=\"button\" class=\"btn btn-ghost\"\n"
+        "                        onclick=\"this.closest('.modal-overlay').remove()\">Cancel</button>\n"
+        "            </div>\n");
+    sb_append(&sb, "        </form>\n");
+    sb_append(&sb, "    </div>\n");
+    sb_append(&sb, "</div>\n");
+
+    free(esc_vm);
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_directory_listing                                          */
+/* ------------------------------------------------------------------ */
+
+char *render_directory_listing(const char *current_path, char **entries, int count)
+{
+    strbuf_t sb;
+    sb_init(&sb, 4096);
+
+    char *esc_path = html_escape(current_path);
+    char *url_path = url_encode(current_path);
+
+    sb_append(&sb, "<div class=\"dir-browser\">\n");
+    sb_appendf(&sb, "    <div class=\"dir-current-path\">\xf0\x9f\x93\x81 %s</div>\n", esc_path);
+    sb_append(&sb, "    <div class=\"dir-list\">\n");
+
+    for (int i = 0; i < count; i++) {
+        char *esc_name = html_escape(entries[i]);
+        int is_parent = strcmp(entries[i], "..") == 0;
+
+        /* Build full path for this entry */
+        char fullpath[4096];
+        if (is_parent) {
+            /* Go up one level */
+            const char *last_slash = strrchr(current_path, '/');
+            if (last_slash && last_slash != current_path) {
+                snprintf(fullpath, sizeof(fullpath), "%.*s",
+                         (int)(last_slash - current_path), current_path);
+            } else {
+                snprintf(fullpath, sizeof(fullpath), "/");
+            }
+        } else {
+            if (strcmp(current_path, "/") == 0)
+                snprintf(fullpath, sizeof(fullpath), "/%s", entries[i]);
+            else
+                snprintf(fullpath, sizeof(fullpath), "%s/%s", current_path, entries[i]);
+        }
+        char *url_fullpath = url_encode(fullpath);
+        char *esc_fullpath = html_escape(fullpath);
+
+        sb_appendf(&sb,
+            "        <div class=\"dir-entry\" "
+            "hx-get=\"/api/browse?path=%s\" "
+            "hx-target=\"#dir-browser-content\" "
+            "hx-swap=\"innerHTML\">"
+            "%s %s</div>\n",
+            url_fullpath,
+            is_parent ? "\xe2\xac\x86\xef\xb8\x8f" : "\xf0\x9f\x93\x82",
+            esc_name);
+
+        free(esc_name);
+        free(url_fullpath);
+        free(esc_fullpath);
+    }
+
+    sb_append(&sb, "    </div>\n");
+
+    /* "Select this directory" button */
+    sb_appendf(&sb,
+        "    <div class=\"dir-actions\">\n"
+        "        <button class=\"btn btn-primary\" "
+        "onclick=\"selectDirectory(&#39;%s&#39;)\">Select This Folder</button>\n"
+        "        <button class=\"btn btn-ghost\" "
+        "onclick=\"document.getElementById(&#39;dir-browser-modal&#39;).remove()\">Cancel</button>\n"
+        "    </div>\n",
+        esc_path);
+
+    sb_append(&sb, "</div>\n");
+
+    free(esc_path);
+    free(url_path);
+    return sb_finish(&sb);
+}
+
+/* ------------------------------------------------------------------ */
+/*  render_success / render_error                                     */
+/* ------------------------------------------------------------------ */
+
+char *render_success(const char *message)
+{
+    char *esc = html_escape(message);
+    char *html = str_fmt("<div class=\"alert alert-success\">\xe2\x9c\x93 %s</div>", esc);
+    free(esc);
+    return html;
+}
+
+char *render_error(const char *message)
+{
+    char *esc = html_escape(message);
+    char *html = str_fmt("<div class=\"alert alert-error\">\xe2\x9c\x97 %s</div>", esc);
+    free(esc);
+    return html;
+}
