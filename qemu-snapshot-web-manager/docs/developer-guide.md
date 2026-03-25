@@ -106,6 +106,8 @@ pkg-config --modversion libmicrohttpd libvirt jansson
 
 All three libraries must be found by `pkg-config` before the build will succeed.
 
+> **Note:** The build also links against `-lvirt-qemu` (from the same `libvirt-devel` / `libvirt-dev` package) for `virDomainQemuAgentCommand()`, which is used to send commands to the QEMU Guest Agent inside VMs.
+
 ---
 
 ## 4. Building
@@ -306,6 +308,7 @@ typedef struct {
 | `render_shared_folders()` | Shared folder list with mount tags and paths |
 | `render_success()` | `<div class="alert alert-success">` message |
 | `render_error()` | `<div class="alert alert-error">` message |
+| `render_error_html()` | Rich HTML error message with structured details, SELinux fix instructions, and distro-specific install commands |
 
 HTMX attributes (`hx-get`, `hx-post`, `hx-delete`, `hx-target`, `hx-swap`, `hx-confirm`) are embedded directly in the rendered HTML.
 
@@ -401,6 +404,11 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `POST` | `/api/vms/{name}/snapshots/{snap}/revert` | — | HTML success/error | HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/merge` | — | HTML success/error | Block commit for external snapshots |
 | `GET` | `/api/vms/{name}/shared-folders` | — | HTML fragment | Shared folders list for VM |
+| `GET` | `/api/browse?path=...` | — | HTML fragment | Server-side directory browser; returns folder listing for the given path |
+| `POST` | `/api/vms/{name}/shared-folders` | URL-encoded: `source_dir`, `mount_tag` | HTML success/error | Add virtiofs shared folder to VM; HX-Trigger: `vmStateChanged` |
+| `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | — | HTML success/error | Remove (detach) shared folder from VM; HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | — | HTML success/error | Mount shared folder inside guest via QEMU Guest Agent |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | — | HTML success/error | Unmount shared folder inside guest via QEMU Guest Agent |
 
 `{name}` is the VM name (URL-decoded). `{snap}` is the snapshot ID (URL-decoded).
 
@@ -493,7 +501,45 @@ To add support for a new hypervisor (e.g., Proxmox, Xen, Incus):
 
 ---
 
-## 10. Code Style & Conventions
+## 10. Guest Agent Integration
+
+The mount/unmount feature communicates with the QEMU Guest Agent running inside the VM via `virDomainQemuAgentCommand()` from `libvirt-qemu.h`.
+
+### How It Works
+
+1. **Mount command flow:**
+   - The handler builds a JSON command for `guest-exec`:
+     ```json
+     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mkdir", "arg": ["-p", "/mnt/<tag>"], "capture-output": true}}
+     ```
+   - Then issues the mount:
+     ```json
+     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mount", "arg": ["-t", "virtiofs", "<tag>", "/mnt/<tag>"], "capture-output": true}}
+     ```
+   - Output is retrieved via `guest-exec-status` with the PID returned by `guest-exec`.
+   - Command output is base64-encoded by the agent and decoded on the host.
+
+2. **Unmount command flow:**
+   - Issues `guest-exec` with `/usr/bin/umount /mnt/<tag>`.
+
+3. **Error handling:**
+   - If the guest agent is not running or not installed, `virDomainQemuAgentCommand()` returns an error.
+   - Mount failures return rich HTML errors via `render_error_html()` that include:
+     - The actual error message from the guest
+     - SELinux fix instructions (`semanage permissive -a virt_qemu_ga_t`)
+     - Distro-specific commands to install `qemu-guest-agent` and `policycoreutils-python-utils`
+
+### SELinux Considerations
+
+On Fedora/RHEL guests, SELinux confines the guest agent under the `virt_qemu_ga_t` domain, which by default does not allow arbitrary command execution (including `mount`). The recommended fix is:
+
+```bash
+sudo semanage permissive -a virt_qemu_ga_t
+```
+
+---
+
+## 11. Code Style & Conventions
 
 | Convention | Example |
 |------------|---------|
@@ -521,7 +567,7 @@ To add support for a new hypervisor (e.g., Proxmox, Xen, Incus):
 
 ---
 
-## 11. Debugging
+## 12. Debugging
 
 ### Debug Build
 
@@ -564,6 +610,22 @@ curl -X POST http://localhost:9091/api/vms/myvm/snapshots/snap1/merge
 
 # List shared folders
 curl http://localhost:9091/api/vms/myvm/shared-folders
+
+# Browse directories on the host
+curl "http://localhost:9091/api/browse?path=/home"
+
+# Add a shared folder
+curl -X POST -d 'source_dir=/home/user/shared&mount_tag=myshare' \
+    http://localhost:9091/api/vms/myvm/shared-folders
+
+# Remove (detach) a shared folder
+curl -X DELETE http://localhost:9091/api/vms/myvm/shared-folders/myshare
+
+# Mount a shared folder inside the guest
+curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/myshare/mount
+
+# Unmount a shared folder inside the guest
+curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/myshare/unmount
 ```
 
 ### Verbose Libvirt Logging
@@ -585,7 +647,7 @@ The `LIBVIRT_DEBUG` environment variable enables verbose output from the libvirt
 
 ---
 
-## 12. Known Technical Debt / TODOs
+## 13. Known Technical Debt / TODOs
 
 - **No authentication or authorization.** The server binds to all interfaces. Use a reverse proxy or firewall to restrict access.
 - **No HTTPS.** TLS termination should be handled by a reverse proxy (e.g., nginx, Caddy).
