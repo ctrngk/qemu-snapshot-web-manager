@@ -392,9 +392,66 @@ For each shared folder, you'll see:
 
 <!-- Screenshot: Shared folders section in the right panel showing mount tags and paths -->
 
-> ⚠️ **Note:** This tool **shows** shared folders but doesn't create them. To
-> set up new shared folders for a VM, use **virt-manager** (the graphical VM
-> manager) or the `virsh` command-line tool.
+### Adding a Shared Folder
+
+You can add shared folders directly from the web interface:
+
+1. In the **Shared Folders** section (right panel), click **"+ Add Shared Folder"**.
+2. Fill in the form:
+   - **Source Directory** — The folder on your host computer you want to share. You can type a path or click **"Browse..."** to pick a folder using the built-in directory browser.
+   - **Mount Tag** — A label the VM uses to identify this folder. One is auto-generated for you, but you can change it.
+3. Click **Add**.
+
+The shared folder will be added to the VM's configuration. The VM may need to be restarted for it to take effect.
+
+### Removing a Shared Folder
+
+To remove a shared folder, click the **"Detach"** button next to it.
+
+> ⚠️ **"Detach" does NOT delete your files.** It only removes the shared folder link from the VM configuration. Your files on the host computer are completely safe and untouched.
+
+### Mounting and Unmounting Inside the VM
+
+Once a shared folder is configured, you need to **mount** it inside the VM to actually access the files. QSWM can do this for you automatically if the VM has the **QEMU Guest Agent** installed.
+
+- Click **"Mount"** next to a shared folder to mount it inside the VM at `/mnt/<tag>`.
+- Click **"Unmount"** to disconnect it.
+
+If the guest agent is not installed, the UI will show you the manual mount commands you can run inside the VM yourself.
+
+> 💡 **What is the QEMU Guest Agent?** It's a small helper program that runs inside your VM. It lets the host computer send commands to the VM (like "mount this folder"). Without it, the host has no way to reach inside the VM. See [Installing the Guest Agent](#installing-the-qemu-guest-agent) below.
+
+### Installing the QEMU Guest Agent
+
+To use the Mount/Unmount buttons, install the guest agent inside your VM:
+
+**Fedora / RHEL:**
+```bash
+sudo dnf install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+After installing, restart the VM or the agent service, and the Mount/Unmount buttons should work.
+
+### SELinux Note (Fedora / RHEL)
+
+On Fedora or RHEL systems, SELinux may block the guest agent from executing mount commands. If mount fails with a permission error, run this inside the VM:
+
+```bash
+sudo semanage permissive -a virt_qemu_ga_t
+```
+
+This tells SELinux to allow the guest agent to perform system operations like mounting folders.
+
+> 💡 If `semanage` is not installed, install it with:
+> - **Fedora / RHEL:** `sudo dnf install policycoreutils-python-utils`
+> - **Ubuntu / Debian:** `sudo apt install policycoreutils-python-utils`
 
 ---
 
@@ -502,6 +559,16 @@ Some snapshot operations require the VM to be in a certain state.
    the files.
 3. Check that the disk files haven't been moved or renamed outside of libvirt.
 
+### Mount/Unmount button doesn't work
+
+The Mount and Unmount buttons require the **QEMU Guest Agent** to be running inside the VM.
+
+**Fix:**
+
+1. Install the guest agent inside the VM (see [Section 6](#installing-the-qemu-guest-agent)).
+2. Make sure the VM is running (guest agent only works when the VM is on).
+3. On Fedora/RHEL, check if SELinux is blocking the agent (see [SELinux Note](#selinux-note-fedora--rhel)).
+
 ### The snapshot tree looks empty
 
 If you select a VM and the tree area is blank:
@@ -529,6 +596,8 @@ If you select a VM and the tree area is blank:
 | **KVM** | A Linux feature that lets QEMU run VMs much faster by using your processor's built-in virtualization support. QEMU + KVM together give you near-native performance. |
 | **Host** | Your real, physical computer — the one running the VMs. |
 | **Guest** | The virtual machine itself — the simulated computer running inside the host. |
+| **QEMU Guest Agent** | A helper service running inside the VM that lets the host send commands to the guest (like mounting folders). Required for the Mount/Unmount feature. |
+| **Detach** | Removes a shared folder configuration from a VM. Does NOT delete any files on the host. |
 
 ---
 

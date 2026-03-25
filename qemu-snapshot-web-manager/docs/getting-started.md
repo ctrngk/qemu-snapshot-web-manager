@@ -114,6 +114,26 @@ sudo ./scripts/uninstall.sh
 
 ---
 
+## Guest Agent (for Mount/Unmount)
+
+If you want to use the **Mount** and **Unmount** buttons for shared folders, install the **QEMU Guest Agent** inside each VM:
+
+**Fedora / RHEL (inside the VM):**
+```bash
+sudo dnf install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+**Ubuntu / Debian (inside the VM):**
+```bash
+sudo apt install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+Without the guest agent, you can still see shared folders and their mount commands — you'll just need to run the mount command manually inside the VM.
+
+---
+
 ## Available Scripts
 
 All scripts are in the `scripts/` directory:
