@@ -338,6 +338,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
     strbuf_t sb;
     sb_init(&sb, (size_t)count * 512);
 
+    sb_append(&sb, "<div id=\"folder-notification\"></div>\n");
     sb_append(&sb, "<div class=\"shared-folders-list\">\n");
 
     for (int i = 0; i < count; i++) {
@@ -372,7 +373,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             "        <div class=\"folder-actions\">\n"
             "            <button class=\"btn btn-sm btn-success\"\n"
             "                    hx-post=\"/api/vms/%s/shared-folders/%s/mount\"\n"
-            "                    hx-target=\"#shared-folders\"\n"
+            "                    hx-target=\"#folder-notification\"\n"
             "                    hx-swap=\"innerHTML\"\n"
             "                    hx-confirm=\"Mount %s inside the guest VM?\"\n"
             "                    title=\"Mount inside guest via QEMU Guest Agent\">\n"
@@ -380,7 +381,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             "            </button>\n"
             "            <button class=\"btn btn-sm btn-warning\"\n"
             "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
-            "                    hx-target=\"#shared-folders\"\n"
+            "                    hx-target=\"#folder-notification\"\n"
             "                    hx-swap=\"innerHTML\"\n"
             "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
             "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
@@ -393,8 +394,8 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
             "                hx-target=\"#shared-folders\"\n"
             "                hx-swap=\"innerHTML\"\n"
-            "                hx-confirm=\"Remove shared folder '%s'?\">\n"
-            "            \xf0\x9f\x97\x91\n"
+            "                hx-confirm=\"Detach shared folder '%s'? (Files on host are not deleted)\">\n"
+            "            \xe2\x9c\x96 Detach\n"
             "        </button>\n",
             esc_vm, esc_tag, esc_tag);
         sb_append(&sb, "        </div>\n");
@@ -569,4 +570,9 @@ char *render_error(const char *message)
     char *html = str_fmt("<div class=\"alert alert-error\">\xe2\x9c\x97 %s</div>", esc);
     free(esc);
     return html;
+}
+
+char *render_error_html(const char *html_message)
+{
+    return str_fmt("<div class=\"alert alert-error\">\xe2\x9c\x97 %s</div>", html_message);
 }

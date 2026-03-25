@@ -110,7 +110,10 @@ header {
 }
 
 .vm-panel {
-    min-width: 0;
+    min-width: 180px;
+    max-width: 500px;
+    resize: horizontal;
+    overflow: auto;
 }
 
 .tree-panel {
@@ -118,7 +121,15 @@ header {
 }
 
 .detail-panel {
-    min-width: 0;
+    min-width: 200px;
+    max-width: 600px;
+    resize: horizontal;
+    overflow: auto;
+    direction: rtl;  /* resize handle on the left side */
+}
+
+.detail-panel > * {
+    direction: ltr;  /* restore text direction for content */
 }
 
 .panel-header {

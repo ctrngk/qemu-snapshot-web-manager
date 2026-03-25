@@ -751,12 +751,13 @@ static int lv_remove_shared_folder(const char *vm_name, const char *mount_tag)
 static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
 {
     /* Build guest-exec JSON command.
-     * We use /bin/sh -c "command" to allow shell features. */
+     * Use /usr/bin/bash with explicit PATH for full command availability. */
     char cmd_json[2048];
     snprintf(cmd_json, sizeof(cmd_json),
         "{\"execute\":\"guest-exec\","
-        "\"arguments\":{\"path\":\"/bin/sh\","
+        "\"arguments\":{\"path\":\"/usr/bin/bash\","
         "\"arg\":[\"-c\",\"%s\"],"
+        "\"env\":[\"PATH=/usr/sbin:/usr/bin:/sbin:/bin\"],"
         "\"capture-output\":true}}",
         command);
 
@@ -827,10 +828,24 @@ static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
 
     if (exitcode != 0) {
         if (out_msg) {
-            if (err_data && strlen(err_data) > 0) {
-                *out_msg = strdup("Command failed inside guest. Check that the filesystem type is supported and the mount tag is correct.");
+            /* Decode base64 stderr/stdout for meaningful error messages */
+            const char *out_data_b64 = json_string_value(json_object_get(ret_obj, "out-data"));
+            char decoded[512] = "";
+
+            /* Try stderr first, then stdout */
+            const char *b64 = (err_data && strlen(err_data) > 0) ? err_data :
+                              (out_data_b64 && strlen(out_data_b64) > 0) ? out_data_b64 : NULL;
+            if (b64) {
+                snprintf(decoded, sizeof(decoded), "%.500s", b64);
+            }
+
+            if (exitcode == 126) {
+                /* Permission denied — likely SELinux */
+                *out_msg = strdup("Permission denied inside guest (SELinux may be blocking mount from the guest agent context).");
+            } else if (exitcode == 127) {
+                *out_msg = strdup("Command not found inside guest. Required packages may not be installed.");
             } else {
-                char buf[128];
+                char buf[256];
                 snprintf(buf, sizeof(buf), "Command exited with code %d inside guest", exitcode);
                 *out_msg = strdup(buf);
             }
@@ -859,16 +874,16 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
         return -1;
     }
 
-    /* Build mount command: mkdir -p /mnt/{tag} && mount -t {fs_type} {tag} /mnt/{tag} */
+    /* Build mount command with full paths (guest agent has minimal PATH) */
     const char *fst = (fs_type && strlen(fs_type) > 0) ? fs_type : "virtiofs";
     char cmd[512];
     if (strcmp(fst, "9p") == 0) {
         snprintf(cmd, sizeof(cmd),
-            "mkdir -p /mnt/%s && mount -t 9p -o trans=virtio %s /mnt/%s",
+            "/usr/bin/mkdir -p /mnt/%s && /usr/bin/mount -t 9p -o trans=virtio %s /mnt/%s",
             mount_tag, mount_tag, mount_tag);
     } else {
         snprintf(cmd, sizeof(cmd),
-            "mkdir -p /mnt/%s && mount -t virtiofs %s /mnt/%s",
+            "/usr/bin/mkdir -p /mnt/%s && /usr/bin/mount -t virtiofs %s /mnt/%s",
             mount_tag, mount_tag, mount_tag);
     }
 
@@ -899,7 +914,7 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
     }
 
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "umount /mnt/%s", mount_tag);
+    snprintf(cmd, sizeof(cmd), "/usr/bin/umount /mnt/%s", mount_tag);
 
     char *msg = NULL;
     int ret = guest_exec(dom, cmd, &msg);
