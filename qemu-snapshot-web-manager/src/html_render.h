@@ -32,6 +32,9 @@ char *render_success(const char *message);
 /* Render an error message. Returns malloc'd HTML string. */
 char *render_error(const char *message);
 
+/* Render an error message with raw HTML (no escaping). Returns malloc'd HTML string. */
+char *render_error_html(const char *html_message);
+
 /* Render a directory browser listing for the browse modal.
  * Returns malloc'd HTML string. */
 char *render_directory_listing(const char *current_path, char **entries, int count);

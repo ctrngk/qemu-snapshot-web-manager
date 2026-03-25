@@ -525,14 +525,27 @@ static enum MHD_Result handle_mount_shared_folder(struct MHD_Connection *conn,
         be->free_shared_folders(folders, count);
 
     if (rc != 0) {
-        char *html = render_error("Failed to mount. Is qemu-guest-agent installed and running in the VM?");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html, "sharedFoldersChanged");
+        char *html = render_error_html(
+            "Failed to mount shared folder inside guest.<br><br>"
+            "<strong>Common causes:</strong><br>"
+            "• VM is not running<br>"
+            "• <code>qemu-guest-agent</code> is not installed in the VM<br>"
+            "• <strong>SELinux</strong> blocks mount from guest agent context (Fedora/RHEL)<br><br>"
+            "<strong>Fix SELinux (run inside the VM):</strong><br>"
+            "<code>sudo semanage permissive -a virt_qemu_ga_t</code><br><br>"
+            "<strong>Install guest agent:</strong><br>"
+            "<code>Fedora/RHEL:</code> sudo dnf install qemu-guest-agent<br>"
+            "<code>Debian/Ubuntu:</code> sudo apt install qemu-guest-agent<br>"
+            "<code>Arch:</code> sudo pacman -S qemu-guest-agent<br>"
+            "<code>Alpine:</code> apk add qemu-guest-agent"
+        );
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
         free(html);
         return ret;
     }
 
-    char *html = render_success("Mounted successfully inside guest");
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    char *html = render_success("Mounted successfully inside guest at /mnt/&lt;tag&gt;");
+    enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
     return ret;
 }
@@ -551,14 +564,22 @@ static enum MHD_Result handle_unmount_shared_folder(struct MHD_Connection *conn,
 
     int rc = be->unmount_shared_folder(vm_name, mount_tag);
     if (rc != 0) {
-        char *html = render_error("Failed to unmount. Is the folder mounted? Is qemu-guest-agent running?");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html, "sharedFoldersChanged");
+        char *html = render_error_html(
+            "Failed to unmount shared folder inside guest.<br><br>"
+            "<strong>Common causes:</strong><br>"
+            "• Folder is not currently mounted<br>"
+            "• VM is not running or guest agent unavailable<br>"
+            "• <strong>SELinux</strong> blocks umount from guest agent context<br><br>"
+            "<strong>Fix SELinux (run inside the VM):</strong><br>"
+            "<code>sudo semanage permissive -a virt_qemu_ga_t</code>"
+        );
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
         free(html);
         return ret;
     }
 
     char *html = render_success("Unmounted successfully inside guest");
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
     return ret;
 }

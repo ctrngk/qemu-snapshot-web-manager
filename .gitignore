@@ -1,0 +1,4 @@
+# Build artifacts
+qemu-snapshot-web-manager/build/
+*.o
+*.d

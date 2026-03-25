@@ -104,9 +104,14 @@
             // Handle HX-Trigger response headers for toast notifications
         });
 
-        // Handle errors
-        document.body.addEventListener('htmx:responseError', function(evt) {
-            showToast('Request failed: ' + evt.detail.xhr.status, 'error');
+        // Handle errors — swap error content into target (HTMX skips non-2xx by default)
+        document.body.addEventListener('htmx:beforeSwap', function(evt) {
+            var status = evt.detail.xhr.status;
+            if (status >= 400 && status < 600) {
+                // Allow the swap so the error HTML fragment is displayed
+                evt.detail.shouldSwap = true;
+                evt.detail.isError = false;
+            }
         });
 
         function showToast(message, type) {
