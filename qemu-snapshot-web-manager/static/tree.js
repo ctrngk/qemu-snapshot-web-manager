@@ -169,6 +169,14 @@ function renderTree(data) {
         .attr('text-anchor', 'middle')
         .text(function(d) { return d.data.name; });
 
+    // ★ indicator above current snapshot
+    nodes.filter(function(d) { return d.data.isCurrent; })
+        .append('text')
+        .attr('class', 'node-current-star')
+        .attr('dy', -(nodeRadius + 4))
+        .attr('text-anchor', 'middle')
+        .text('★');
+
     // Initial fit
     fitToView(false);
 }
