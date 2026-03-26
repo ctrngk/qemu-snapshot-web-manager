@@ -433,7 +433,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         sb_appendf(&sb,
             "        <button class=\"btn btn-sm btn-danger\"\n"
             "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
-            "                hx-target=\"#shared-folders\"\n"
+            "                hx-target=\"#shared-folders-content\"\n"
             "                hx-swap=\"innerHTML\"\n"
             "                hx-confirm=\"Detach shared folder '%s'? (Files on host are not deleted)\">\n"
             "            \xe2\x9c\x96 Detach\n"
@@ -467,7 +467,7 @@ char *render_add_shared_folder_form(const char *vm_name)
     sb_append(&sb, "        <h3>Add Shared Folder</h3>\n");
     sb_appendf(&sb,
         "        <form hx-post=\"/api/vms/%s/shared-folders\"\n"
-        "              hx-target=\"#shared-folders\"\n"
+        "              hx-target=\"#shared-folders-content\"\n"
         "              hx-swap=\"innerHTML\"\n"
         "              hx-on::after-request=\"this.closest('.modal-overlay').remove()\">\n",
         esc_vm);
