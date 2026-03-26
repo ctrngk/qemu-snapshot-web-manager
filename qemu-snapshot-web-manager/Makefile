@@ -1,6 +1,6 @@
 CC      ?= gcc
 CFLAGS  := -Wall -Wextra -std=c11 -D_GNU_SOURCE
-LDFLAGS :=
+LDFLAGS := -lpthread
 
 PKG_CFLAGS := $(shell pkg-config --cflags libmicrohttpd libvirt jansson)
 PKG_LIBS   := $(shell pkg-config --libs   libmicrohttpd libvirt jansson) -lvirt-qemu

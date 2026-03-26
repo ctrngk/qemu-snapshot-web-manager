@@ -10,12 +10,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <pthread.h>
 
 /* ------------------------------------------------------------------ */
 /*  module state                                                      */
 /* ------------------------------------------------------------------ */
 
 static virConnectPtr conn = NULL;
+static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* ------------------------------------------------------------------ */
 /*  XML parsing helpers (no libxml2 dependency)                       */
@@ -86,26 +88,56 @@ static char *unix_to_iso(const char *unix_str)
 }
 
 /* ------------------------------------------------------------------ */
+/*  mutex helpers                                                     */
+/* ------------------------------------------------------------------ */
+
+/* Lock mutex, check conn, lookup domain. Caller must call conn_unlock() when done with dom. */
+static virDomainPtr lv_lookup_domain_locked(const char *vm_name)
+{
+    pthread_mutex_lock(&conn_mutex);
+    if (!conn) {
+        pthread_mutex_unlock(&conn_mutex);
+        return NULL;
+    }
+    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    if (!dom) {
+        pthread_mutex_unlock(&conn_mutex);
+        return NULL;
+    }
+    return dom;  /* caller must call conn_unlock() after using dom */
+}
+
+static void conn_unlock(void)
+{
+    pthread_mutex_unlock(&conn_mutex);
+}
+
+/* ------------------------------------------------------------------ */
 /*  connection lifecycle                                               */
 /* ------------------------------------------------------------------ */
 
 static int lv_connect(const char *uri)
 {
+    pthread_mutex_lock(&conn_mutex);
     conn = virConnectOpen(uri);
     if (!conn) {
+        pthread_mutex_unlock(&conn_mutex);
         log_msg(LOG_ERROR, "libvirt: failed to connect to %s", uri);
         return -1;
     }
+    pthread_mutex_unlock(&conn_mutex);
     log_msg(LOG_INFO, "libvirt: connected to %s", uri);
     return 0;
 }
 
 static void lv_disconnect(void)
 {
+    pthread_mutex_lock(&conn_mutex);
     if (conn) {
         virConnectClose(conn);
         conn = NULL;
     }
+    pthread_mutex_unlock(&conn_mutex);
 }
 
 /* ------------------------------------------------------------------ */
@@ -124,10 +156,12 @@ static vm_state_t map_domain_state(int state)
 
 static int lv_list_vms(vm_info_t ***vms, int *count)
 {
+    pthread_mutex_lock(&conn_mutex);
     virDomainPtr *domains = NULL;
     int n = virConnectListAllDomains(conn, &domains,
                 VIR_CONNECT_LIST_DOMAINS_ACTIVE |
                 VIR_CONNECT_LIST_DOMAINS_INACTIVE);
+    pthread_mutex_unlock(&conn_mutex);
     if (n < 0) {
         log_msg(LOG_ERROR, "libvirt: virConnectListAllDomains failed");
         *vms   = NULL;
@@ -204,8 +238,9 @@ static void lv_free_vm_list(vm_info_t **vms, int count)
 
 static int lv_vm_start(const char *vm_name)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
     int ret = virDomainCreate(dom);
     virDomainFree(dom);
     return ret;
@@ -213,8 +248,9 @@ static int lv_vm_start(const char *vm_name)
 
 static int lv_vm_stop(const char *vm_name)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
     int ret = virDomainShutdown(dom);
     virDomainFree(dom);
     return ret;
@@ -222,8 +258,9 @@ static int lv_vm_stop(const char *vm_name)
 
 static int lv_vm_pause(const char *vm_name)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
     int ret = virDomainSuspend(dom);
     virDomainFree(dom);
     return ret;
@@ -237,8 +274,9 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
 {
     *tree = NULL;
 
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     virDomainSnapshotPtr *snaps = NULL;
     int n = virDomainListAllSnapshots(dom, &snaps, 0);
@@ -349,8 +387,9 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
 static int lv_create_snapshot(const char *vm_name, const char *snap_name,
                               const char *description, snap_type_t type)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     char xml[4096];
     if (type == SNAP_EXTERNAL) {
@@ -392,8 +431,9 @@ static int lv_create_snapshot(const char *vm_name, const char *snap_name,
 static int lv_delete_snapshot(const char *vm_name, const char *snap_name,
                               int auto_merge)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     virDomainSnapshotPtr snap =
         virDomainSnapshotLookupByName(dom, snap_name, 0);
@@ -423,8 +463,9 @@ static int lv_delete_snapshot(const char *vm_name, const char *snap_name,
 
 static int lv_revert_snapshot(const char *vm_name, const char *snap_name)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     virDomainSnapshotPtr snap =
         virDomainSnapshotLookupByName(dom, snap_name, 0);
@@ -441,8 +482,9 @@ static int lv_revert_snapshot(const char *vm_name, const char *snap_name)
 
 static int lv_merge_snapshot(const char *vm_name, const char *snap_name)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     /* Verify snapshot exists */
     virDomainSnapshotPtr snap =
@@ -476,8 +518,9 @@ static int lv_list_shared_folders(const char *vm_name,
     *out   = NULL;
     *count = 0;
 
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     char *xml = virDomainGetXMLDesc(dom, 0);
     virDomainFree(dom);
@@ -559,11 +602,12 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
                                 const char *mount_tag, int read_only,
                                 const char *fs_type)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) {
         log_msg(LOG_ERROR, "libvirt: VM '%s' not found", vm_name);
         return -1;
     }
+    conn_unlock();
 
     /* virtiofs requires shared memory backing — auto-enable if missing */
     if (!str_eq(fs_type, "9p")) {
@@ -592,7 +636,9 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
                     memcpy(newxml + prefix_len + 2 + mb_len, insert_point, suffix_len);
                     newxml[prefix_len + 2 + mb_len + suffix_len] = '\0';
 
+                    pthread_mutex_lock(&conn_mutex);
                     virDomainPtr newdom = virDomainDefineXML(conn, newxml);
+                    pthread_mutex_unlock(&conn_mutex);
                     if (newdom) {
                         virDomainFree(dom);
                         dom = newdom;
@@ -662,11 +708,12 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
 
 static int lv_remove_shared_folder(const char *vm_name, const char *mount_tag)
 {
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) {
         log_msg(LOG_ERROR, "libvirt: VM '%s' not found", vm_name);
         return -1;
     }
+    conn_unlock();
 
     /* Get domain XML and find the matching <filesystem> block */
     char *full_xml = virDomainGetXMLDesc(dom, 0);
@@ -907,9 +954,9 @@ static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
 static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
                                    const char *fs_type)
 {
-    if (!conn) return -1;
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     /* Check VM is running */
     virDomainInfo info;
@@ -946,9 +993,9 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
 
 static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
 {
-    if (!conn) return -1;
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     /* Check VM is running */
     virDomainInfo info;
@@ -976,10 +1023,11 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
 static int lv_check_mount_status(const char *vm_name,
                                   shared_folder_t *folders, int count)
 {
-    if (!conn || !folders || count <= 0) return -1;
+    if (!folders || count <= 0) return -1;
 
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     /* Default all to unknown (-1) */
     for (int i = 0; i < count; i++)
@@ -1055,9 +1103,9 @@ static int lv_check_mount_status(const char *vm_name,
 
 static int lv_check_automount_status(const char *vm_name)
 {
-    if (!conn) return -1;
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
+    conn_unlock();
 
     virDomainInfo info;
     if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
@@ -1080,15 +1128,12 @@ static int lv_check_automount_status(const char *vm_name)
 
 static int lv_setup_automount(const char *vm_name, char **out_msg)
 {
-    if (!conn) {
-        if (out_msg) *out_msg = strdup("Not connected to libvirt");
-        return -1;
-    }
-    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) {
-        if (out_msg) *out_msg = strdup("VM not found");
+        if (out_msg) *out_msg = strdup("VM not found or not connected to libvirt");
         return -1;
     }
+    conn_unlock();
 
     virDomainInfo info;
     if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
