@@ -78,23 +78,27 @@ Go to **http://localhost:9091**
 ## What You'll See
 
 ```
-┌──────────────┬──────────────────────────┬──────────────────┐
-│  Your VMs    │   Snapshot Tree (D3.js)  │  Details Panel   │
-│              │                          │                  │
-│  vm1 ● on   │       [root]             │  Name: snap1     │
-│  vm2 ○ off  │      /     \             │  Type: internal  │
-│  vm3 ● on   │  [snap1]  [snap2]        │  Date: ...       │
-│              │     |                    │                  │
-│              │  [snap3]                 │  [Revert][Delete]│
-│              │                          │                  │
-│              │                          │  Shared Folders  │
-│              │                          │  📁 myshare     │
-└──────────────┴──────────────────────────┴──────────────────┘
+┌──────────────┬──────────────────────────┬───────────────────────────┐
+│  Your VMs    │   Snapshot Tree (D3.js)  │  Details Panel            │
+│              │                          │                           │
+│  vm1 ● on   │       [root]             │  Name: snap1              │
+│  vm2 ○ off  │      /     \             │  Type: internal           │
+│  vm3 ● on   │  [snap1]  [snap2]        │  Date: ...                │
+│              │     |                    │                           │
+│              │  [snap3]                 │  [Revert] [Delete]        │
+│              │                          │                           │
+│              │                          │  Shared Folders           │
+│              │                          │  📁 myshare ✓ Mounted    │
+│              │                          │    [Unmount]              │
+│              │                          │  📁 data   ✗ Not Mounted │
+│              │                          │    [Mount]                │
+│              │                          │  [+ Add Shared Folder]    │
+└──────────────┴──────────────────────────┴───────────────────────────┘
 ```
 
 - **Left panel** — Your VMs with status (click to select)
 - **Center** — Interactive snapshot tree (click nodes, zoom, pan)
-- **Right** — Snapshot details + actions + shared folders
+- **Right** — Snapshot details + actions + shared folders with mount status
 
 ---
 
@@ -130,7 +134,12 @@ sudo apt install qemu-guest-agent
 sudo systemctl enable --now qemu-guest-agent
 ```
 
-Without the guest agent, you can still see shared folders and their mount commands — you'll just need to run the mount command manually inside the VM.
+Mount status is automatically detected and shown as **✓ Mounted** or **✗ Not Mounted** badges in the UI. Without the guest agent, you can still see shared folders and their mount commands — you'll just need to run the mount command manually inside the VM.
+
+> **SELinux note (Fedora/RHEL):** If mounts fail even with the guest agent installed, SELinux may be blocking the operation. Run this inside the VM:
+> ```bash
+> sudo semanage permissive -a virt_qemu_ga_t
+> ```
 
 ---
 
@@ -166,6 +175,12 @@ All scripts are in the `scripts/` directory:
 
 **Build errors**
 → Run `./scripts/deps.sh` first, then `make clean && make`
+
+**"Mount/Unmount button doesn't work"**
+→ Install `qemu-guest-agent` inside the VM and make sure the VM is running. See the [Guest Agent](#guest-agent-for-mountunmount) section above.
+
+**"SELinux blocking mount"**
+→ On Fedora/RHEL guests, run `sudo semanage permissive -a virt_qemu_ga_t` inside the VM
 
 ---
 
