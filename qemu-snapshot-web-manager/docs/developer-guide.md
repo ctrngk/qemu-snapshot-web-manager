@@ -164,6 +164,38 @@ Browser
                              └── snapshot.c → JSON → D3.js render in browser
 ```
 
+### Thread Safety
+
+libmicrohttpd is configured with `MHD_USE_THREAD_PER_CONNECTION` — each HTTP request runs in its own OS thread. This requires careful synchronization of shared state.
+
+**Connection mutex:**
+
+The libvirt connection handle (`static virConnectPtr conn`) is shared across all request threads and protected by a global mutex:
+
+```c
+static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
+```
+
+**Locking helpers:**
+
+| Function | Purpose |
+|----------|---------|
+| `conn_lock()` | Acquire `conn_mutex` (wrapper around `pthread_mutex_lock`) |
+| `conn_unlock()` | Release `conn_mutex` |
+| `lv_lookup_domain_locked()` | Acquires mutex, calls `virDomainLookupByName()`, returns `virDomainPtr` with mutex **still held** — caller must call `conn_unlock()` after finishing with the domain |
+
+**Why only guard `conn`?** `virDomainPtr` objects are independently thread-safe in libvirt >= 0.9.0. Once a domain handle is obtained, it can be used without holding the connection mutex. The mutex only serializes access to the shared `virConnectPtr`.
+
+**Per-thread error buffer:**
+
+```c
+_Thread_local char lv_last_error[1024];
+```
+
+Each thread gets its own error buffer, avoiding races on error message passing between the libvirt backend and route handlers (see [Error Propagation Pattern](#error-propagation-pattern) below).
+
+**Concurrency testing:** The implementation has been stress-tested with 30 concurrent requests to validate correctness under contention.
+
 ### Backend Vtable (`vm_backend.h`)
 
 The hypervisor abstraction uses a vtable (struct of function pointers) to decouple the HTTP layer from any specific hypervisor API.
@@ -183,7 +215,9 @@ typedef struct vm_backend {
     // VM lifecycle
     int (*vm_start)(const char *vm_name);
     int (*vm_stop)(const char *vm_name);
+    int (*vm_force_stop)(const char *vm_name);
     int (*vm_pause)(const char *vm_name);
+    int (*vm_resume)(const char *vm_name);
 
     // Snapshot operations
     int (*list_snapshots)(const char *vm_name, snapshot_node_t **tree);
@@ -223,6 +257,8 @@ typedef struct vm_backend {
 **Backend implementations:**
 - **libvirt** (`libvirt_backend.c`): Full implementation via the libvirt C API. Accessed via `libvirt_backend_get()`.
 - **UTM** (`utm_backend.c`): macOS-only behind `#ifdef __APPLE__`. On Linux, returns NULL. Accessed via `utm_backend_get()`.
+
+> `vm_force_stop` and `vm_resume` are implemented for both libvirt and UTM backends. Force-stop calls `virDomainDestroy()` (immediate power-off); resume calls `virDomainResume()` (unpause a paused VM).
 
 ### HTTP Server (`server.c`)
 
@@ -400,6 +436,43 @@ Key JS functions: `selectVm(vmName)`, `loadSnapshotTree(vmName)`, `showToast(mes
 
 **`tree.js`** — D3.js v7 snapshot tree: fetches JSON from `/api/vms/{name}/snapshots`, builds `d3.hierarchy()`, lays out with `d3.tree()`, renders SVG with `d3.zoom()` for pan/zoom.
 
+**HTMX notification pattern:**
+
+Notification divs are placed **outside** HTMX reload targets to prevent wipe-on-refresh:
+
+```html
+<!-- OUTSIDE any hx-target swap zone -->
+<div id="folder-notification-persistent">...</div>
+```
+
+- **Success responses** include `HX-Trigger: sharedFoldersChanged` to reload panel data while keeping the notification visible.
+- **Error responses** do **not** include the trigger — this prevents the panel reload from wiping the error message before the user reads it.
+- Error responses use `send_html()` (no trigger) rather than `send_html_trigger()`.
+
+**VM list auto-refresh:**
+
+```html
+<div id="vm-list"
+     hx-get="/api/vms"
+     hx-trigger="load, vmStateChanged from:body, every 10s">
+```
+
+The list refreshes on initial load, after any mutation trigger, and every 10 seconds as a heartbeat.
+
+**Active VM re-selection:** An `htmx:afterSwap` listener re-applies the `.active` class to the currently selected VM after the list refreshes, preserving the visual selection state.
+
+**D3.js current-snapshot indicator:**
+
+The current (active) snapshot is highlighted with a `★` text element positioned above the tree node, plus a drop-shadow glow filter for visibility:
+
+```css
+.node-current-star {
+    fill: gold;
+    font-size: 18px;
+    filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.8));
+}
+```
+
 ---
 
 ## 6. API Reference
@@ -427,6 +500,9 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | — | HTML success/error | Detach shared folder; HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | — | HTML success/error | Mount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | — | HTML success/error | Unmount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/resume` | — | HTML success/error | Resume paused VM (`virDomainResume`); HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/force-stop` | — | HTML success/error | Force stop VM (`virDomainDestroy`); HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/convert-nvram` | — | HTML success/error | Convert NVRAM raw→qcow2 for internal snapshot support |
 | `POST` | `/api/vms/{name}/shared-folders/automount` | — | HTML success/error | Install auto-mount systemd timer in guest; HX-Trigger: `sharedFoldersChanged` |
 
 `{name}` is the VM name (URL-decoded). `{snap}` is the snapshot ID (URL-decoded).
@@ -659,6 +735,29 @@ After writing the files, the setup function runs `systemctl daemon-reload && sys
 - `0` → "⚙️ Setup Auto-Mount" button (POSTs to `/api/vms/{name}/shared-folders/automount`)
 - `-1` → nothing shown (agent unavailable)
 
+### NVRAM Conversion
+
+UEFI VMs use pflash firmware with NVRAM stored at `/var/lib/libvirt/qemu/nvram/`. Internal snapshots require qcow2 format for all disk-like images — raw format NVRAM does not support snapshots and will cause `virDomainSnapshotCreateXML()` to fail.
+
+**`lv_convert_nvram()` function:**
+
+1. Reads the domain XML via `virDomainGetXMLDesc()`
+2. Extracts the NVRAM path and format using `extract_xml_content_ext()` (handles tags with attributes, e.g., `<nvram format='raw'>/path/to/nvram</nvram>`)
+3. If format is already `qcow2`, returns success (no-op)
+4. Runs `qemu-img convert -f raw -O qcow2 <path> <path>.qcow2` followed by `mv`
+5. Updates the domain XML to set `format='qcow2'` and redefines via `virDomainDefineXML()`
+
+**Precondition:** The VM must be shut off — libvirt only allows persistent XML changes on stopped domains.
+
+**XML helper:**
+
+```c
+char *extract_xml_content_ext(const char *xml, const char *tag,
+                              char *attr_buf, size_t attr_buf_sz);
+```
+
+Unlike the simpler `extract_xml_content()`, this variant captures tag attributes (e.g., `format='raw'`) into `attr_buf`, enabling callers to inspect and modify attribute values.
+
 ### Guest Sudoers Configuration
 
 The project's guest dotfiles include `/etc/sudoers.d/copilot-automation` which grants passwordless access to specific commands only (not `NOPASSWD: ALL`):
@@ -684,6 +783,32 @@ This follows the principle of least privilege — only the commands needed for s
 | Logging | `log_msg(LOG_INFO, "fmt", ...)` — levels: `LOG_DEBUG`, `LOG_INFO`, `LOG_WARN`, `LOG_ERROR` |
 | Includes | System headers first, then project headers |
 | Error returns | 0 = success, -1 = failure (matches libvirt convention) |
+
+### Error Propagation Pattern
+
+libvirt's `virGetLastError()` returns a thread-local error that is **cleared** by subsequent libvirt calls — including `virDomainFree()`. This creates a race between reading the error and cleaning up resources.
+
+**Solution:** The `lv_last_error` thread-local buffer captures error details immediately, before any cleanup:
+
+```c
+_Thread_local char lv_last_error[1024];
+
+// In backend functions — save error BEFORE virDomainFree():
+virErrorPtr err = virGetLastError();
+if (err && err->message)
+    snprintf(lv_last_error, sizeof(lv_last_error), "%s", err->message);
+virDomainFree(dom);  // this clears virGetLastError()
+
+// In route handlers — read the saved error:
+const char *err_msg = lv_get_last_error();
+return send_html(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                 render_error(err_msg));
+```
+
+**Key rules:**
+1. Always call `virGetLastError()` **before** `virDomainFree()` (which clears the thread-local `virError`)
+2. Route handlers call `lv_get_last_error()` instead of `virGetLastError()` directly
+3. Error responses use `send_html()` (no trigger) to prevent panel reload from wiping the error notification
 
 ### Key Utility Functions (`util.h`)
 
@@ -769,6 +894,15 @@ curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/myshare/unmount
 
 # Setup auto-mount in the guest
 curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/automount
+
+# Resume a paused VM
+curl -X POST http://localhost:9091/api/vms/myvm/resume
+
+# Force stop a VM (immediate power-off)
+curl -X POST http://localhost:9091/api/vms/myvm/force-stop
+
+# Convert NVRAM from raw to qcow2
+curl -X POST http://localhost:9091/api/vms/myvm/convert-nvram
 ```
 
 ### Verbose Libvirt Logging
