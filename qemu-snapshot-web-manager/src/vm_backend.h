@@ -74,6 +74,12 @@ typedef struct vm_backend {
     /* Check mount status inside guest via guest agent */
     int  (*check_mount_status)(const char *vm_name,
                                 shared_folder_t *folders, int count);
+
+    /* Auto-mount: check if auto-mount timer is installed in guest */
+    int  (*check_automount_status)(const char *vm_name);  /* returns 1=active, 0=inactive, -1=error */
+
+    /* Auto-mount: install auto-mount systemd service in guest */
+    int  (*setup_automount)(const char *vm_name, char **out_msg);
 } vm_backend_t;
 
 /* ─── Backend registry ─── */
