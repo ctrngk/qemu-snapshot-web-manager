@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+#include <linux/limits.h>   /* PATH_MAX */
+#include <sys/wait.h>       /* WEXITSTATUS */
 
 /* ------------------------------------------------------------------ */
 /*  module state                                                      */
@@ -46,6 +48,37 @@ static char *extract_xml_content(const char *xml, const char *tag)
     char *result = malloc(len + 1);
     if (!result) return NULL;
     memcpy(result, start, len);
+    result[len] = '\0';
+    return result;
+}
+
+/* Like extract_xml_content but handles tags with attributes: <tag attr='...'>content</tag> */
+static char *extract_xml_content_ext(const char *xml, const char *tag)
+{
+    /* First try exact match <tag> */
+    char *result = extract_xml_content(xml, tag);
+    if (result) return result;
+
+    /* Try <tag ... (space after tag name indicates attributes) */
+    char pattern[64], close_tag[64];
+    snprintf(pattern, sizeof(pattern), "<%s ", tag);
+    snprintf(close_tag, sizeof(close_tag), "</%s>", tag);
+
+    const char *tag_start = strstr(xml, pattern);
+    if (!tag_start) return NULL;
+
+    /* Find the closing > of the opening tag */
+    const char *content_start = strchr(tag_start, '>');
+    if (!content_start) return NULL;
+    content_start++;  /* skip the '>' */
+
+    const char *end = strstr(content_start, close_tag);
+    if (!end) return NULL;
+
+    size_t len = (size_t)(end - content_start);
+    result = malloc(len + 1);
+    if (!result) return NULL;
+    memcpy(result, content_start, len);
     result[len] = '\0';
     return result;
 }
@@ -115,6 +148,11 @@ static virDomainPtr lv_lookup_domain_locked(const char *vm_name)
 static void conn_unlock(void)
 {
     pthread_mutex_unlock(&conn_mutex);
+}
+
+static void conn_lock(void)
+{
+    pthread_mutex_lock(&conn_mutex);
 }
 
 /* ------------------------------------------------------------------ */
@@ -409,6 +447,183 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/*  NVRAM format conversion (raw → qcow2 for internal snapshots)      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Convert a VM's NVRAM from raw to qcow2 format.
+ * Required for internal snapshots on UEFI VMs.
+ * VM MUST be shut off before calling this.
+ * Returns: 0 = converted, 1 = already qcow2, -1 = error.
+ */
+int lv_convert_nvram(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    /* Check VM is shut off */
+    int info_state;
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) == 0)
+        info_state = info.state;
+    else
+        info_state = -1;
+
+    if (info_state != VIR_DOMAIN_SHUTOFF) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "VM must be stopped before converting NVRAM");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Get inactive (persistent) XML */
+    char *dom_xml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
+    if (!dom_xml) {
+        snprintf(lv_last_error, sizeof(lv_last_error), "Failed to get domain XML");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Find <nvram ...>path</nvram> */
+    char *nvram_path = extract_xml_content_ext(dom_xml, "nvram");
+    if (!nvram_path || strlen(nvram_path) == 0) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "No NVRAM path found in domain XML (not a UEFI VM?)");
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Check current format — look for format='qcow2' on <nvram> tag */
+    char *nvram_format = extract_xml_attr(dom_xml, "nvram", "format");
+    if (nvram_format && str_eq(nvram_format, "qcow2")) {
+        log_msg(LOG_INFO, "NVRAM already in qcow2 format: %s", nvram_path);
+        free(nvram_format);
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return 1;  /* already qcow2 */
+    }
+    free(nvram_format);
+
+    /* Build qcow2 path: replace .fd extension with .qcow2 */
+    char qcow2_path[PATH_MAX];
+    const char *dot = strrchr(nvram_path, '.');
+    if (dot) {
+        size_t prefix_len = (size_t)(dot - nvram_path);
+        snprintf(qcow2_path, sizeof(qcow2_path), "%.*s.qcow2",
+                 (int)prefix_len, nvram_path);
+    } else {
+        snprintf(qcow2_path, sizeof(qcow2_path), "%s.qcow2", nvram_path);
+    }
+
+    /* Convert: qemu-img convert -f raw -O qcow2 <old> <new> */
+    char cmd[PATH_MAX * 2 + 128];
+    snprintf(cmd, sizeof(cmd),
+             "qemu-img convert -f raw -O qcow2 '%s' '%s'",
+             nvram_path, qcow2_path);
+    log_msg(LOG_INFO, "Converting NVRAM: %s", cmd);
+    int rc = system(cmd);
+    if (rc != 0) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "qemu-img convert failed (exit %d)", WEXITSTATUS(rc));
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Update domain XML: replace nvram path and format attributes */
+    /* We need to change:
+     *   format='raw'  → format='qcow2'
+     *   >old_path</nvram>  → >new_path</nvram>
+     */
+    /* Strategy: find and replace in the XML string */
+    size_t xml_len = strlen(dom_xml);
+    char *new_xml = malloc(xml_len + 512);
+    if (!new_xml) {
+        snprintf(lv_last_error, sizeof(lv_last_error), "Out of memory");
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Copy XML, replacing nvram path */
+    char *nvram_start = strstr(dom_xml, nvram_path);
+    if (!nvram_start) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Could not find NVRAM path in XML for replacement");
+        free(new_xml);
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    size_t prefix = (size_t)(nvram_start - dom_xml);
+    memcpy(new_xml, dom_xml, prefix);
+    size_t offset = prefix;
+    offset += (size_t)sprintf(new_xml + offset, "%s", qcow2_path);
+    size_t old_path_len = strlen(nvram_path);
+    strcpy(new_xml + offset, nvram_start + old_path_len);
+
+    /* Now replace format='raw' with format='qcow2' in the <nvram> tag area */
+    /* Find the <nvram tag in new_xml */
+    char *nvram_tag = strstr(new_xml, "<nvram ");
+    if (nvram_tag) {
+        /* Find format='raw' or format="raw" within the tag */
+        char *tag_end = strchr(nvram_tag, '>');
+        if (tag_end) {
+            char *fmt_raw = strstr(nvram_tag, "format='raw'");
+            char *fmt_raw2 = strstr(nvram_tag, "format=\"raw\"");
+            char *fmt_pos = fmt_raw ? fmt_raw : fmt_raw2;
+            if (fmt_pos && fmt_pos < tag_end) {
+                /* Replace "raw" with "qcow2" — need to shift rest of string */
+                /* "format='raw'" (12 chars) → "format='qcow2'" (14 chars) */
+                char quote = fmt_raw ? '\'' : '"';
+                size_t old_len = (size_t)(12 + (fmt_raw2 ? 0 : 0)); /* format='raw' = 12 chars */
+                char replacement[32];
+                snprintf(replacement, sizeof(replacement), "format=%cqcow2%c", quote, quote);
+                size_t new_len = strlen(replacement);
+                size_t rest_len = strlen(fmt_pos + old_len);
+                memmove(fmt_pos + new_len, fmt_pos + old_len, rest_len + 1);
+                memcpy(fmt_pos, replacement, new_len);
+            }
+        }
+    }
+
+    log_msg(LOG_DEBUG, "Redefining domain with updated NVRAM path");
+    conn_lock();
+    virDomainPtr new_dom = virDomainDefineXML(conn, new_xml);
+    conn_unlock();
+    free(new_xml);
+
+    if (!new_dom) {
+        virErrorPtr err = virGetLastError();
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to redefine domain: %s",
+                 (err && err->message) ? err->message : "unknown");
+        /* Revert: try to remove the qcow2 file */
+        unlink(qcow2_path);
+        free(nvram_path);
+        free(dom_xml);
+        virDomainFree(dom);
+        return -1;
+    }
+    virDomainFree(new_dom);
+
+    log_msg(LOG_INFO, "NVRAM converted: %s → %s", nvram_path, qcow2_path);
+
+    free(nvram_path);
+    free(dom_xml);
+    virDomainFree(dom);
+    return 0;
+}
+
 static int lv_create_snapshot(const char *vm_name, const char *snap_name,
                               const char *description, snap_type_t type)
 {
@@ -440,12 +655,20 @@ static int lv_create_snapshot(const char *vm_name, const char *snap_name,
         : 0;
 
     virDomainSnapshotPtr snap = virDomainSnapshotCreateXML(dom, xml, flags);
-    virDomainFree(dom);
 
     if (!snap) {
-        log_msg(LOG_ERROR, "libvirt: failed to create snapshot '%s'", snap_name);
+        /* Save the libvirt error before virDomainFree clears it */
+        virErrorPtr err = virGetLastError();
+        if (err && err->message)
+            snprintf(lv_last_error, sizeof(lv_last_error), "%s", err->message);
+        else
+            snprintf(lv_last_error, sizeof(lv_last_error), "Unknown error");
+        log_msg(LOG_ERROR, "libvirt: failed to create snapshot '%s': %s",
+                snap_name, lv_last_error);
+        virDomainFree(dom);
         return -1;
     }
+    virDomainFree(dom);
     virDomainSnapshotFree(snap);
     log_msg(LOG_INFO, "libvirt: created %s snapshot '%s' on '%s'",
             type == SNAP_EXTERNAL ? "external" : "internal",

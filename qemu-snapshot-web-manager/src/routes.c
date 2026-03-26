@@ -268,6 +268,31 @@ static enum MHD_Result handle_vm_force_stop(struct MHD_Connection *conn,
     return ret;
 }
 
+static enum MHD_Result handle_convert_nvram(struct MHD_Connection *conn,
+                                            const char *vm_name)
+{
+    int rc = lv_convert_nvram(vm_name);
+    if (rc == 1) {
+        char *html = render_success("NVRAM is already in qcow2 format — no conversion needed");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+        free(html);
+        return ret;
+    }
+    if (rc != 0) {
+        const char *err = lv_get_last_error();
+        char msg[1200];
+        snprintf(msg, sizeof(msg), "NVRAM conversion failed: %s", err);
+        char *html = render_error(msg);
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+    char *html = render_success("✓ NVRAM converted to qcow2. You can now start the VM and take internal snapshots.");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
+    free(html);
+    return ret;
+}
+
 static enum MHD_Result handle_snapshot_tree(struct MHD_Connection *conn,
                                             const char *vm_name)
 {
@@ -357,7 +382,24 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
     free(type_str);
 
     if (rc != 0) {
-        char *html = render_error("Failed to create snapshot");
+        const char *err = lv_get_last_error();
+        char msg[1300];
+        if (strstr(err, "pflash") || strstr(err, "QCOW2 nvram") || strstr(err, "qcow2")) {
+            snprintf(msg, sizeof(msg),
+                "Internal snapshot requires QCOW2 NVRAM format. "
+                "Stop the VM and click Convert NVRAM, then start it again."
+                "<div style=\"margin-top:8px\">"
+                "<button class=\"btn btn-sm btn-primary\""
+                " hx-post=\"/api/vms/%s/convert-nvram\""
+                " hx-target=\"#snapshot-tree\""
+                " hx-swap=\"innerHTML\""
+                ">🔧 Convert NVRAM</button>"
+                "</div>",
+                vm_name);
+        } else {
+            snprintf(msg, sizeof(msg), "Failed to create snapshot: %s", err);
+        }
+        char *html = render_error(msg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
@@ -946,6 +988,12 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
     /* /api/vms/{name}/force-stop */
     if (str_eq(seg3, "force-stop") && is_post) {
         result = handle_vm_force_stop(connection, vm_name);
+        goto cleanup;
+    }
+
+    /* /api/vms/{name}/convert-nvram */
+    if (str_eq(seg3, "convert-nvram") && is_post) {
+        result = handle_convert_nvram(connection, vm_name);
         goto cleanup;
     }
 
