@@ -1027,6 +1027,42 @@ textarea.form-input {
     pointer-events: none;
 }
 
+/* "Current State" virtual node */
+.node-circle.current-state {
+    fill: var(--bg-tertiary);
+    stroke: var(--text-secondary);
+    stroke-width: 2px;
+    stroke-dasharray: 3,2;
+    cursor: default;
+}
+.node-circle.current-state:hover {
+    fill: var(--bg-tertiary);
+}
+.current-state-label {
+    font-size: 0.7rem;
+    font-style: italic;
+    fill: var(--text-secondary);
+}
+.current-state-info {
+    font-size: 0.65rem;
+    fill: var(--color-warning, #e6a817);
+    pointer-events: none;
+}
+
+/* Revert confirmation panel */
+.revert-confirm {
+    padding: 1rem;
+}
+.revert-confirm h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+}
+.revert-confirm p {
+    margin: 0 0 1rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
 /* ===== Loading Spinner ===== */
 .spinner {
     display: inline-block;

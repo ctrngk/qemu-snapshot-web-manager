@@ -846,6 +846,76 @@ static void lv_free_shared_folders(shared_folder_t *folders, int count)
 /*  shared folder management                                          */
 /* ------------------------------------------------------------------ */
 
+int lv_enable_shared_memory(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    char *domxml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
+    if (!domxml) {
+        virDomainFree(dom);
+        return -1;
+    }
+
+    if (strstr(domxml, "<access mode='shared'")) {
+        /* Already enabled */
+        free(domxml);
+        virDomainFree(dom);
+        return 0;
+    }
+
+    log_msg(LOG_INFO, "libvirt: enabling shared memory for '%s'", vm_name);
+
+    const char *mem_backing =
+        "<memoryBacking>\n"
+        "    <source type='memfd'/>\n"
+        "    <access mode='shared'/>\n"
+        "  </memoryBacking>\n";
+
+    char *insert_point = strstr(domxml, "</domain>");
+    if (!insert_point) {
+        free(domxml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    size_t prefix_len = (size_t)(insert_point - domxml);
+    size_t mb_len = strlen(mem_backing);
+    size_t suffix_len = strlen(insert_point);
+    char *newxml = malloc(prefix_len + mb_len + 4 + suffix_len + 1);
+    if (!newxml) {
+        free(domxml);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    memcpy(newxml, domxml, prefix_len);
+    memcpy(newxml + prefix_len, "  ", 2);
+    memcpy(newxml + prefix_len + 2, mem_backing, mb_len);
+    memcpy(newxml + prefix_len + 2 + mb_len, insert_point, suffix_len);
+    newxml[prefix_len + 2 + mb_len + suffix_len] = '\0';
+    free(domxml);
+
+    conn_lock();
+    virDomainPtr newdom = virDomainDefineXML(conn, newxml);
+    conn_unlock();
+    free(newxml);
+
+    if (!newdom) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to enable shared memory: %s",
+                 virGetLastError() ? virGetLastError()->message : "unknown");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    virDomainFree(newdom);
+    virDomainFree(dom);
+    log_msg(LOG_INFO, "libvirt: shared memory enabled on '%s'", vm_name);
+    return 0;
+}
+
 static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
                                 const char *mount_tag, int read_only,
                                 const char *fs_type)
@@ -857,48 +927,17 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
     }
     conn_unlock();
 
-    /* virtiofs requires shared memory backing — auto-enable if missing */
+    /* virtiofs requires shared memory backing — check if missing */
     if (!str_eq(fs_type, "9p")) {
         char *domxml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
         if (domxml && !strstr(domxml, "<access mode='shared'")) {
-            log_msg(LOG_INFO, "libvirt: enabling shared memory for virtiofs on '%s'",
+            log_msg(LOG_INFO, "libvirt: VM '%s' needs shared memory for virtiofs",
                     vm_name);
-
-            /* Insert <memoryBacking> before </domain> if not present */
-            const char *mem_backing =
-                "<memoryBacking>\n"
-                "    <source type='memfd'/>\n"
-                "    <access mode='shared'/>\n"
-                "  </memoryBacking>\n";
-
-            char *insert_point = strstr(domxml, "</domain>");
-            if (insert_point) {
-                size_t prefix_len = (size_t)(insert_point - domxml);
-                size_t mb_len = strlen(mem_backing);
-                size_t suffix_len = strlen(insert_point);
-                char *newxml = malloc(prefix_len + mb_len + 4 + suffix_len + 1);
-                if (newxml) {
-                    memcpy(newxml, domxml, prefix_len);
-                    memcpy(newxml + prefix_len, "  ", 2);
-                    memcpy(newxml + prefix_len + 2, mem_backing, mb_len);
-                    memcpy(newxml + prefix_len + 2 + mb_len, insert_point, suffix_len);
-                    newxml[prefix_len + 2 + mb_len + suffix_len] = '\0';
-
-                    pthread_mutex_lock(&conn_mutex);
-                    virDomainPtr newdom = virDomainDefineXML(conn, newxml);
-                    pthread_mutex_unlock(&conn_mutex);
-                    if (newdom) {
-                        virDomainFree(dom);
-                        dom = newdom;
-                        log_msg(LOG_INFO, "libvirt: shared memory enabled on '%s'",
-                                vm_name);
-                    } else {
-                        log_msg(LOG_WARN, "libvirt: failed to enable shared memory on '%s'",
-                                vm_name);
-                    }
-                    free(newxml);
-                }
-            }
+            free(domxml);
+            virDomainFree(dom);
+            snprintf(lv_last_error, sizeof(lv_last_error),
+                     "VirtioFS requires shared memory to be enabled on this VM");
+            return -2;  /* signal: shared memory required */
         }
         free(domxml);
     }
