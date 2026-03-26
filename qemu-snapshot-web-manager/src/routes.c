@@ -550,7 +550,7 @@ static enum MHD_Result handle_mount_shared_folder(struct MHD_Connection *conn,
     }
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "Mounted successfully at /mnt/%s", mount_tag);
+    snprintf(msg, sizeof(msg), "Mounted successfully at /media/%s", mount_tag);
     char *html = render_success(msg);
     enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
     free(html);

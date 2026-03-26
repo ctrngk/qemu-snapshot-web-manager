@@ -521,17 +521,17 @@ The mount/unmount feature communicates with the QEMU Guest Agent running inside 
 1. **Mount command flow:**
    - The handler builds a JSON command for `guest-exec`:
      ```json
-     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mkdir", "arg": ["-p", "/mnt/<tag>"], "capture-output": true}}
+     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mkdir", "arg": ["-p", "/media/<tag>"], "capture-output": true}}
      ```
    - Then issues the mount:
      ```json
-     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mount", "arg": ["-t", "virtiofs", "<tag>", "/mnt/<tag>"], "capture-output": true}}
+     {"execute": "guest-exec", "arguments": {"path": "/usr/bin/mount", "arg": ["-t", "virtiofs", "<tag>", "/media/<tag>"], "capture-output": true}}
      ```
    - Output is retrieved via `guest-exec-status` with the PID returned by `guest-exec`.
    - Command output is base64-encoded by the agent and decoded on the host.
 
 2. **Unmount command flow:**
-   - Issues `guest-exec` with `/usr/bin/umount /mnt/<tag>`.
+   - Issues `guest-exec` with `/usr/bin/umount /media/<tag>`.
 
 3. **Error handling:**
    - If the guest agent is not running or not installed, `virDomainQemuAgentCommand()` returns an error.
