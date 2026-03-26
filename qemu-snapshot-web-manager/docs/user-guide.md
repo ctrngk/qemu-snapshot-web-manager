@@ -259,6 +259,34 @@ from the left panel, and you'll see control buttons.
 > again, it picks up right where it left off. Think of it like pressing pause
 > on a movie.
 
+### Resuming a VM
+
+If your VM is paused, you can unpause it:
+
+1. Select the paused VM (it will have a yellow status badge).
+2. Click **▶ Resume**.
+3. The VM picks up exactly where it left off — the status badge turns green.
+
+### Force Stopping a VM
+
+Sometimes a VM won't respond to a normal **Stop**. In that case, you can
+force it off:
+
+1. Select the running or paused VM.
+2. Click **⚡ Force**.
+3. The VM is immediately powered off.
+
+> ⚠️ **Use with caution!** Force Stop is like pulling the power plug on a real
+> computer. Only use it when the normal **Stop** button doesn't work. Any
+> unsaved work inside the VM will be lost.
+
+### Auto-Refresh
+
+The VM list automatically refreshes every **10 seconds**. This means if you
+shut down a VM from inside the guest (e.g., clicking "Shut Down" in the VM's
+desktop), the status badge will update on its own — no need to manually
+refresh the page.
+
 ---
 
 ## 5. Working with Snapshots
@@ -299,7 +327,9 @@ relate to each other.
 - Each **circle** is a snapshot.
 - **Lines** between circles show parent-child relationships (which snapshot came
   from which).
-- The **green circle** is where your VM currently is.
+- The **current/active snapshot** — the one your VM is "on" right now — has a
+  **★ star** symbol above it and a **green glow** effect. This makes it easy to
+  spot at a glance.
 - **Gray circles** are older snapshots you can go back to.
 - **Dashed borders** indicate external snapshots.
 
@@ -370,6 +400,24 @@ border in the tree).
 > running, the merge may fail. Stop the VM first, then merge.
 
 <!-- Screenshot: Merge button visible on an external snapshot's detail panel -->
+
+### NVRAM Conversion for UEFI VMs
+
+If your VM uses **UEFI firmware** (most modern VMs do), you might see an error
+about "pflash" or "QCOW2 NVRAM" when trying to create an internal snapshot
+(the kind that saves memory + disk together). This happens because the NVRAM
+firmware file is in a format that doesn't support snapshots.
+
+**How to fix it (one-time setup):**
+
+1. **Stop** the VM first (it must be fully shut off).
+2. Look at the error message — it will include a **"🔧 Convert NVRAM"** button.
+   Click it.
+3. Wait for the conversion to finish (it only takes a moment).
+4. **Start** the VM again and try creating your snapshot — it will work now!
+
+> 💡 **Good news:** You only need to do this once per VM. After the NVRAM file
+> is converted, internal snapshots will work every time.
 
 ---
 
@@ -569,6 +617,11 @@ is significantly faster than 9p for shared folders.
 
 ## 8. Troubleshooting
 
+> 💡 **About error messages:** When something goes wrong, QSWM shows you
+> specific details about what happened — not just a generic error. Notification
+> messages (both successes and errors) stay visible until you perform another
+> action, so you have time to read them.
+
 ### "No virtual machines found"
 
 The tool can't see any VMs. This usually means the libvirt service isn't
@@ -631,6 +684,10 @@ Some snapshot operations require the VM to be in a certain state.
 
 - **Creating an internal snapshot**: The VM may need to be paused or shut off.
   Try shutting down the VM first.
+- **"pflash" or "QCOW2 NVRAM" error**: Your UEFI VM's firmware file needs to
+  be converted. Stop the VM, click the **"🔧 Convert NVRAM"** button in the
+  error message, then start the VM and try again. See
+  [NVRAM Conversion for UEFI VMs](#nvram-conversion-for-uefi-vms) for details.
 - **Reverting**: Works in most states, but if it fails, try stopping the VM
   first, then reverting.
 - **Merging**: The VM **must** be shut off. Stop the VM, then try again.
