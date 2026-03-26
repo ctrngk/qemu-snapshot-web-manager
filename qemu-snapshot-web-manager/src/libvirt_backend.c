@@ -648,16 +648,16 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
     }
 
     int ret = virDomainAttachDeviceFlags(dom, xml, flags);
-    virDomainFree(dom);
-
     if (ret != 0) {
-        log_msg(LOG_ERROR, "libvirt: failed to add shared folder '%s' to '%s'",
-                mount_tag, vm_name);
-        return -1;
+        virErrorPtr verr = virGetLastError();
+        log_msg(LOG_ERROR, "libvirt: failed to add shared folder '%s' to '%s': %s",
+                mount_tag, vm_name, verr && verr->message ? verr->message : "unknown error");
+    } else {
+        log_msg(LOG_INFO, "libvirt: added shared folder '%s' (%s) to '%s'",
+                mount_tag, fs_type, vm_name);
     }
-    log_msg(LOG_INFO, "libvirt: added shared folder '%s' (%s) to '%s'",
-            mount_tag, fs_type, vm_name);
-    return 0;
+    virDomainFree(dom);
+    return ret;
 }
 
 static int lv_remove_shared_folder(const char *vm_name, const char *mount_tag)

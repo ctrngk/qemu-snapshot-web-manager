@@ -6,6 +6,7 @@
 #include <limits.h>
 
 #include <microhttpd.h>
+#include <libvirt/virterror.h>
 
 #include "routes.h"
 #include "util.h"
@@ -473,7 +474,16 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
     free(ro_str);
 
     if (rc != 0) {
-        char *html = render_error("Failed to add shared folder");
+        virErrorPtr verr = virGetLastError();
+        const char *detail = (verr && verr->message) ? verr->message : NULL;
+        char *html;
+        if (detail) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "Failed to add shared folder: %s", detail);
+            html = render_error(buf);
+        } else {
+            html = render_error("Failed to add shared folder (check server logs for details)");
+        }
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "sharedFoldersChanged");
         free(html);
