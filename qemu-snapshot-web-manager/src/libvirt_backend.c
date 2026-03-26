@@ -830,20 +830,28 @@ static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
         if (out_msg) {
             /* Decode base64 stderr/stdout for meaningful error messages */
             const char *out_data_b64 = json_string_value(json_object_get(ret_obj, "out-data"));
-            char decoded[512] = "";
 
             /* Try stderr first, then stdout */
             const char *b64 = (err_data && strlen(err_data) > 0) ? err_data :
                               (out_data_b64 && strlen(out_data_b64) > 0) ? out_data_b64 : NULL;
-            if (b64) {
-                snprintf(decoded, sizeof(decoded), "%.500s", b64);
-            }
 
             if (exitcode == 126) {
                 /* Permission denied — likely SELinux */
                 *out_msg = strdup("Permission denied inside guest (SELinux may be blocking mount from the guest agent context).");
             } else if (exitcode == 127) {
                 *out_msg = strdup("Command not found inside guest. Required packages may not be installed.");
+            } else if (b64) {
+                char *decoded = base64_decode(b64, NULL);
+                if (decoded) {
+                    char buf[1024];
+                    snprintf(buf, sizeof(buf), "Command exited with code %d: %s", exitcode, decoded);
+                    *out_msg = strdup(buf);
+                    free(decoded);
+                } else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "Command exited with code %d inside guest", exitcode);
+                    *out_msg = strdup(buf);
+                }
             } else {
                 char buf[256];
                 snprintf(buf, sizeof(buf), "Command exited with code %d inside guest", exitcode);
@@ -854,8 +862,17 @@ static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
         return -1;
     }
 
+    /* Success — decode and return stdout */
+    if (out_msg) {
+        const char *out_data_b64 = json_string_value(json_object_get(ret_obj, "out-data"));
+        if (out_data_b64 && strlen(out_data_b64) > 0) {
+            *out_msg = base64_decode(out_data_b64, NULL);
+        } else {
+            *out_msg = strdup("");
+        }
+    }
+
     json_decref(resp);
-    if (out_msg) *out_msg = strdup("Success");
     return 0;
 }
 
@@ -947,60 +964,60 @@ static int lv_check_mount_status(const char *vm_name,
         return 0; /* not an error — just can't check */
     }
 
-    /* Query guest-get-fsinfo via guest agent */
-    char *result = virDomainQemuAgentCommand(dom,
-        "{\"execute\":\"guest-get-fsinfo\"}", 10, 0);
+    /* Use findmnt to check mounted filesystems.
+     * guest-get-fsinfo only reports block-device filesystems and misses
+     * virtiofs/9p mounts. findmnt sees all mount types. */
+    char *msg = NULL;
+    int rc = guest_exec(dom, "findmnt -n -o TARGET,FSTYPE --list", &msg);
     virDomainFree(dom);
 
-    if (!result) {
-        /* Guest agent not available — leave as unknown */
+    if (rc != 0 || !msg) {
+        /* Guest agent not available or findmnt failed — leave as unknown */
+        log_msg(LOG_DEBUG, "check_mount_status: findmnt failed for %s: %s",
+                vm_name, msg ? msg : "no output");
+        free(msg);
         return 0;
     }
 
-    json_error_t jerr;
-    json_t *resp = json_loads(result, 0, &jerr);
-    free(result);
-    if (!resp) return 0;
+    log_msg(LOG_DEBUG, "check_mount_status: findmnt output:\n%s", msg);
 
-    json_t *fs_list = json_object_get(resp, "return");
-    if (!json_is_array(fs_list)) {
-        json_decref(resp);
-        return 0;
-    }
-
-    /* Mark all as not mounted first, then check */
+    /* Mark all as not mounted, then check findmnt output */
     for (int i = 0; i < count; i++)
         folders[i].mounted = 0;
 
-    /* For each mounted filesystem in the guest, match against our tags */
-    size_t idx;
-    json_t *fs_entry;
-    json_array_foreach(fs_list, idx, fs_entry) {
-        const char *mountpoint = json_string_value(json_object_get(fs_entry, "mountpoint"));
-        const char *fstype = json_string_value(json_object_get(fs_entry, "type"));
-        if (!mountpoint) continue;
+    /* Parse each line of findmnt output: "TARGET  FSTYPE" */
+    for (int i = 0; i < count; i++) {
+        if (!folders[i].mount_tag) continue;
+        char expected[512];
+        snprintf(expected, sizeof(expected), "/mnt/%s", folders[i].mount_tag);
 
-        /* Match by mount tag: virtiofs/9p mounts show up at /mnt/<tag> */
-        for (int i = 0; i < count; i++) {
-            if (!folders[i].mount_tag) continue;
-            char expected[512];
-            snprintf(expected, sizeof(expected), "/mnt/%s", folders[i].mount_tag);
-            if (strcmp(mountpoint, expected) == 0) {
+        /* Search for the mountpoint in the findmnt output */
+        char *line = msg;
+        while (line && *line) {
+            /* Skip leading whitespace */
+            while (*line == ' ' || *line == '\t') line++;
+
+            /* Find end of line */
+            char *eol = strchr(line, '\n');
+            size_t linelen = eol ? (size_t)(eol - line) : strlen(line);
+
+            /* Check if this line starts with our expected mountpoint */
+            size_t explen = strlen(expected);
+            if (linelen >= explen &&
+                strncmp(line, expected, explen) == 0 &&
+                (line[explen] == ' ' || line[explen] == '\t' ||
+                 line[explen] == '\n' || line[explen] == '\0')) {
                 folders[i].mounted = 1;
+                log_msg(LOG_DEBUG, "check_mount_status: MATCH: %s is mounted",
+                        folders[i].mount_tag);
                 break;
             }
 
-            /* Also check by device name — some systems show the tag as the device */
-            const char *name = json_string_value(json_object_get(fs_entry, "name"));
-            if (name && strcmp(name, folders[i].mount_tag) == 0) {
-                folders[i].mounted = 1;
-                break;
-            }
+            line = eol ? eol + 1 : NULL;
         }
-        (void)fstype; /* may be useful later */
     }
 
-    json_decref(resp);
+    free(msg);
     return 0;
 }
 
