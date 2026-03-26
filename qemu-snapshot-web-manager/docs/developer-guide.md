@@ -201,6 +201,12 @@ typedef struct vm_backend {
     int  (*mount_shared_folder)(const char *vm_name, const char *mount_tag, char **error_html);
     int  (*unmount_shared_folder)(const char *vm_name, const char *mount_tag, char **error_html);
     int  (*check_mount_status)(const char *vm_name, shared_folder_t *folders, int count);
+
+    /* Auto-mount: check if auto-mount timer is installed in guest */
+    int  (*check_automount_status)(const char *vm_name);  /* returns 1=active, 0=inactive, -1=error */
+
+    /* Auto-mount: install auto-mount systemd service in guest */
+    int  (*setup_automount)(const char *vm_name, char **out_msg);
 } vm_backend_t;
 ```
 
@@ -314,6 +320,7 @@ typedef struct {
 | `render_snapshot_detail()` | Snapshot metadata panel with revert/delete/merge buttons |
 | `render_create_snapshot_form()` | Modal form with name/description/type fields |
 | `render_shared_folders()` | Shared folder list with mount tags and paths |
+| `render_shared_folders()` | Also renders auto-mount badge or setup button based on `automount_active` parameter |
 | `render_add_shared_folder_form()` | Add shared folder form with directory browser |
 | `render_directory_listing()` | Server-side directory browser for modal |
 | `render_success()` | `<div class="alert alert-success">` message |
@@ -420,6 +427,7 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | — | HTML success/error | Detach shared folder; HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | — | HTML success/error | Mount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | — | HTML success/error | Unmount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/shared-folders/automount` | — | HTML success/error | Install auto-mount systemd timer in guest; HX-Trigger: `sharedFoldersChanged` |
 
 `{name}` is the VM name (URL-decoded). `{snap}` is the snapshot ID (URL-decoded).
 
@@ -567,6 +575,100 @@ On Fedora/RHEL guests, SELinux confines the guest agent under the `virt_qemu_ga_
 sudo semanage permissive -a virt_qemu_ga_t
 ```
 
+### Guest Command Execution (`guest_exec()`)
+
+The internal `guest_exec()` helper in `libvirt_backend.c` is the foundation for all guest-side operations (mount, unmount, status checks, and auto-mount setup).
+
+**JSON escaping:** Commands are passed to the guest agent as JSON payloads. Since commands can contain quotes, backslashes, and newlines (especially the multi-line scripts used by auto-mount setup), all command strings are escaped via `json_escape()` (`util.c`) before embedding:
+
+```c
+char *json_escape(const char *src);
+// Escapes: " → \", \ → \\, \n → \\n, \r → \\r, \t → \\t
+// Returns malloc'd string. Caller frees.
+```
+
+**Retry loop:** After issuing a `guest-exec` command, the function polls for completion using `guest-exec-status` up to **10 times, 1 second apart** (10 seconds total). This replaced an earlier single-sleep approach that would time out on long-running commands like `systemctl daemon-reload`:
+
+```c
+for (int attempt = 0; attempt < 10; attempt++) {
+    sleep(1);
+    // Send guest-exec-status with PID
+    // If response has "exited": true, break with result
+}
+```
+
+**Flow:** `guest_exec(dom, command, &out_msg)` →
+1. JSON-escapes `command` via `json_escape()`
+2. Sends `guest-exec` with `/bin/bash -c "<escaped_command>"`
+3. Polls `guest-exec-status` up to 10× for completion
+4. Decodes base64-encoded stdout/stderr from the agent
+5. Returns 0 on success (exit code 0), -1 on failure
+
+### Auto-Mount System
+
+The auto-mount feature installs three files inside the guest VM via `guest_exec()`:
+
+**1. Auto-mount script** (`/usr/local/bin/qemu-automount`):
+
+```bash
+#!/bin/bash
+# Discover VirtioFS tags via /sys/fs/virtiofs/*/tag (kernel 6.1+)
+for tag_path in /sys/fs/virtiofs/*/tag; do
+    [ -e "$tag_path" ] || continue
+    TAG=$(cat "$tag_path")
+    MOUNT_POINT="/media/$TAG"
+    mkdir -p "$MOUNT_POINT"
+    if ! mountpoint -q "$MOUNT_POINT"; then
+        mount -t virtiofs "$TAG" "$MOUNT_POINT" >/dev/null 2>&1
+    fi
+done
+```
+
+**2. Systemd service** (`/etc/systemd/system/qemu-automount.service`):
+
+```ini
+[Unit]
+Description=QEMU/KVM VirtioFS Auto-Mounter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/qemu-automount
+```
+
+**3. Systemd timer** (`/etc/systemd/system/qemu-automount.timer`):
+
+```ini
+[Unit]
+Description=Run QEMU Auto-Mounter every 5 seconds
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=5s
+AccuracySec=100ms
+
+[Install]
+WantedBy=timers.target
+```
+
+After writing the files, the setup function runs `systemctl daemon-reload && systemctl enable --now qemu-automount.timer` to activate the timer immediately.
+
+**Status check:** `check_automount_status()` runs `systemctl is-active qemu-automount.timer` in the guest. Returns `1` (active), `0` (inactive/not installed), or `-1` (error/VM not running).
+
+**UI integration:** `render_shared_folders()` accepts an `automount_active` parameter:
+- `1` → green "✓ Auto-Mount Active" badge
+- `0` → "⚙️ Setup Auto-Mount" button (POSTs to `/api/vms/{name}/shared-folders/automount`)
+- `-1` → nothing shown (agent unavailable)
+
+### Guest Sudoers Configuration
+
+The project's guest dotfiles include `/etc/sudoers.d/copilot-automation` which grants passwordless access to specific commands only (not `NOPASSWD: ALL`):
+
+```
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/mkdir, /usr/bin/systemctl, /usr/bin/findmnt
+```
+
+This follows the principle of least privilege — only the commands needed for shared folder and auto-mount operations are permitted.
+
 ---
 
 ## 11. Code Style & Conventions
@@ -592,6 +694,7 @@ sudo semanage permissive -a virt_qemu_ga_t
 | `str_fmt(fmt, ...)` | Allocate and format (like `asprintf`) |
 | `str_starts_with(str, prefix)` | Boolean prefix check |
 | `str_eq(a, b)` | String equality (NULL-safe) |
+| `json_escape(src)` | Escape string for JSON embedding (allocates) |
 | `url_decode(src)` | URL-decode a string (allocates) |
 | `path_segment(url, index)` | Extract Nth URL path segment |
 
@@ -663,6 +766,9 @@ curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/myshare/mount
 
 # Unmount a shared folder inside the guest
 curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/myshare/unmount
+
+# Setup auto-mount in the guest
+curl -X POST http://localhost:9091/api/vms/myvm/shared-folders/automount
 ```
 
 ### Verbose Libvirt Logging
