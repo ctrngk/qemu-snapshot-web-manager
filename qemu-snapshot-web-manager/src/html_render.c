@@ -365,12 +365,12 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         if (strcmp(ftype, "9p") == 0) {
             sb_appendf(&sb,
                 "                <div class=\"folder-mount-hint\">"
-                "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t 9p -o trans=virtio %s /mnt/%s</code></div>\n",
+                "<code>sudo mkdir -p /media/%s &amp;&amp; sudo mount -t 9p -o trans=virtio %s /media/%s</code></div>\n",
                 esc_tag, esc_tag, esc_tag);
         } else {
             sb_appendf(&sb,
                 "                <div class=\"folder-mount-hint\">"
-                "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t virtiofs %s /mnt/%s</code></div>\n",
+                "<code>sudo mkdir -p /media/%s &amp;&amp; sudo mount -t virtiofs %s /media/%s</code></div>\n",
                 esc_tag, esc_tag, esc_tag);
         }
 

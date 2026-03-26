@@ -430,7 +430,7 @@ To remove a shared folder, click the **"Detach"** button next to it.
 
 Once a shared folder is configured, you need to **mount** it inside the VM to actually access the files. QSWM can do this for you automatically if the VM has the **QEMU Guest Agent** installed.
 
-- Click **"Mount"** next to a shared folder to mount it inside the VM at `/mnt/<tag>`.
+- Click **"Mount"** next to a shared folder to mount it inside the VM at `/media/<tag>`.
 - Click **"Unmount"** to disconnect it.
 
 The buttons are smart — the **Mount** button is disabled (grayed out) when the
@@ -610,7 +610,7 @@ If you select a VM and the tree area is blank:
 
 QSWM detects mount status using the guest agent's `findmnt` command. Make sure
 the guest agent is running inside the VM and the folder is mounted at
-`/mnt/<tag>` (the path QSWM expects).
+`/media/<tag>` (the path QSWM expects).
 
 ### Mount button is grayed out
 
@@ -643,7 +643,7 @@ works on a wider range of setups.
 | **Guest** | The virtual machine itself — the simulated computer running inside the host. |
 | **QEMU Guest Agent** | A helper service running inside the VM that lets the host send commands to the guest (like mounting folders). Required for the Mount/Unmount feature. |
 | **9p** | An older but widely compatible protocol for sharing folders between host and guest. Works on more systems but is slower than virtiofs. |
-| **Mount** | Making a shared folder accessible inside the VM. Like plugging in a USB drive — the folder appears at a location (e.g., `/mnt/myshare`) where you can access it. |
+| **Mount** | Making a shared folder accessible inside the VM. Like plugging in a USB drive — the folder appears at a location (e.g., `/media/myshare`) where you can access it. |
 | **Unmount** | Disconnecting a mounted shared folder inside the VM. Like safely ejecting a USB drive. |
 | **Directory browser** | A built-in file picker in QSWM that lets you navigate folders on your host computer to select a shared folder source path. |
 | **Mount tag** | A short label (like a name tag) that identifies a shared folder. The VM uses this tag to find and mount the folder. |

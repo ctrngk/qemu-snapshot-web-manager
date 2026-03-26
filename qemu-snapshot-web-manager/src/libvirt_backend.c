@@ -896,11 +896,11 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
     char cmd[512];
     if (strcmp(fst, "9p") == 0) {
         snprintf(cmd, sizeof(cmd),
-            "/usr/bin/mkdir -p /mnt/%s && /usr/bin/mount -t 9p -o trans=virtio %s /mnt/%s",
+            "/usr/bin/mkdir -p /media/%s && /usr/bin/mount -t 9p -o trans=virtio %s /media/%s",
             mount_tag, mount_tag, mount_tag);
     } else {
         snprintf(cmd, sizeof(cmd),
-            "/usr/bin/mkdir -p /mnt/%s && /usr/bin/mount -t virtiofs %s /mnt/%s",
+            "/usr/bin/mkdir -p /media/%s && /usr/bin/mount -t virtiofs %s /media/%s",
             mount_tag, mount_tag, mount_tag);
     }
 
@@ -909,7 +909,7 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
     if (ret != 0) {
         log_msg(LOG_ERROR, "Mount in guest failed: %s", msg ? msg : "unknown error");
     } else {
-        log_msg(LOG_INFO, "Mounted %s at /mnt/%s in guest %s", mount_tag, mount_tag, vm_name);
+        log_msg(LOG_INFO, "Mounted %s at /media/%s in guest %s", mount_tag, mount_tag, vm_name);
     }
     free(msg);
     virDomainFree(dom);
@@ -931,14 +931,14 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
     }
 
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "/usr/bin/umount /mnt/%s", mount_tag);
+    snprintf(cmd, sizeof(cmd), "/usr/bin/umount /media/%s", mount_tag);
 
     char *msg = NULL;
     int ret = guest_exec(dom, cmd, &msg);
     if (ret != 0) {
         log_msg(LOG_ERROR, "Unmount in guest failed: %s", msg ? msg : "unknown error");
     } else {
-        log_msg(LOG_INFO, "Unmounted /mnt/%s in guest %s", mount_tag, vm_name);
+        log_msg(LOG_INFO, "Unmounted /media/%s in guest %s", mount_tag, vm_name);
     }
     free(msg);
     virDomainFree(dom);
@@ -989,7 +989,7 @@ static int lv_check_mount_status(const char *vm_name,
     for (int i = 0; i < count; i++) {
         if (!folders[i].mount_tag) continue;
         char expected[512];
-        snprintf(expected, sizeof(expected), "/mnt/%s", folders[i].mount_tag);
+        snprintf(expected, sizeof(expected), "/media/%s", folders[i].mount_tag);
 
         /* Search for the mountpoint in the findmnt output */
         char *line = msg;
