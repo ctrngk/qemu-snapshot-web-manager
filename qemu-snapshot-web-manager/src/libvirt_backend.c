@@ -1100,6 +1100,15 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
     char *msg = NULL;
     int rc;
 
+    /* Step 0: Make virt_qemu_ga_t permissive so guest agent can write system files.
+     * This is needed because SELinux blocks writes from the guest agent context.
+     * Ignore errors — semanage may not be installed, or already permissive. */
+    rc = guest_exec(dom,
+        "which semanage >/dev/null 2>&1 && semanage permissive -a virt_qemu_ga_t 2>/dev/null; true",
+        &msg);
+    free(msg); msg = NULL;
+    /* Don't check rc — this step is best-effort */
+
     /* Step 1: Write the auto-mount script */
     rc = guest_exec(dom,
         "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
@@ -1118,7 +1127,19 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
         &msg);
     if (rc != 0) {
         log_msg(LOG_ERROR, "automount: failed to write script: %s", msg ? msg : "unknown");
-        if (out_msg) *out_msg = msg; else free(msg);
+        if (out_msg) {
+            if (msg && strstr(msg, "Permission denied")) {
+                *out_msg = strdup(
+                    "SELinux blocked writing to /usr/local/bin/. "
+                    "Run this inside the guest VM: "
+                    "sudo semanage permissive -a virt_qemu_ga_t "
+                    "(requires: sudo dnf install policycoreutils-python-utils)");
+            } else {
+                *out_msg = msg;
+                msg = NULL;
+            }
+        }
+        free(msg);
         virDomainFree(dom);
         return -1;
     }
