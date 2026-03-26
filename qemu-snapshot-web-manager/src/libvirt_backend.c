@@ -807,33 +807,46 @@ static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
         return -1;
     }
 
-    /* Wait a moment for the command to finish, then check status */
-    sleep(1);
+    /* Poll for command completion — retry up to 10 times (1s each) */
+    int exited = 0;
+    int exitcode = 0;
+    const char *err_data = NULL;
+    resp = NULL;
+    ret_obj = NULL;
 
-    char status_json[256];
-    snprintf(status_json, sizeof(status_json),
-        "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":%d}}", pid);
+    for (int attempt = 0; attempt < 10; attempt++) {
+        sleep(1);
 
-    result = virDomainQemuAgentCommand(dom, status_json, 30, 0);
-    if (!result) {
-        if (out_msg) *out_msg = strdup("Failed to get command status from guest agent");
-        return -1;
+        char status_json[256];
+        snprintf(status_json, sizeof(status_json),
+            "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":%d}}", pid);
+
+        result = virDomainQemuAgentCommand(dom, status_json, 30, 0);
+        if (!result) {
+            if (out_msg) *out_msg = strdup("Failed to get command status from guest agent");
+            return -1;
+        }
+
+        resp = json_loads(result, 0, &jerr);
+        free(result);
+
+        if (!resp) {
+            if (out_msg) *out_msg = strdup("Failed to parse status response");
+            return -1;
+        }
+
+        ret_obj = json_object_get(resp, "return");
+        exited = json_is_true(json_object_get(ret_obj, "exited"));
+
+        if (exited) {
+            exitcode = (int)json_integer_value(json_object_get(ret_obj, "exitcode"));
+            err_data = json_string_value(json_object_get(ret_obj, "err-data"));
+            break;
+        }
+
+        json_decref(resp);
+        resp = NULL;
     }
-
-    resp = json_loads(result, 0, &jerr);
-    free(result);
-
-    if (!resp) {
-        if (out_msg) *out_msg = strdup("Failed to parse status response");
-        return -1;
-    }
-
-    ret_obj = json_object_get(resp, "return");
-    int exited = json_is_true(json_object_get(ret_obj, "exited"));
-    int exitcode = (int)json_integer_value(json_object_get(ret_obj, "exitcode"));
-
-    /* Decode stderr if present (base64-encoded) */
-    const char *err_data = json_string_value(json_object_get(ret_obj, "err-data"));
 
     if (!exited) {
         json_decref(resp);
