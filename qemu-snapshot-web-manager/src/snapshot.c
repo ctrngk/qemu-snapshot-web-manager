@@ -87,8 +87,15 @@ static json_t *node_to_json(snapshot_node_t *node)
                         json_string(node->description ? node->description : ""));
     json_object_set_new(obj, "date",
                         json_string(node->creation_time ? node->creation_time : ""));
-    json_object_set_new(obj, "type",
-                        json_string(node->type == SNAP_INTERNAL ? "internal" : "external"));
+
+    const char *type_str;
+    switch (node->type) {
+    case SNAP_INTERNAL:      type_str = "internal"; break;
+    case SNAP_EXTERNAL:      type_str = "external"; break;
+    case SNAP_CURRENT_STATE: type_str = "current-state"; break;
+    default:                 type_str = "unknown"; break;
+    }
+    json_object_set_new(obj, "type", json_string(type_str));
     json_object_set_new(obj, "isCurrent",
                         json_boolean(node->is_current));
 
@@ -120,4 +127,58 @@ int snapshot_tree_count(snapshot_node_t *root)
     for (int i = 0; i < root->child_count; i++)
         count += snapshot_tree_count(root->children[i]);
     return count;
+}
+
+void snapshot_tree_add_current_state(snapshot_node_t *root,
+                                     const char *vm_state_str,
+                                     int is_dirty)
+{
+    if (!root)
+        return;
+
+    /* Find the current snapshot node */
+    snapshot_node_t *current = NULL;
+    if (root->is_current) {
+        current = root;
+    } else {
+        for (int i = 0; i < root->child_count; i++) {
+            current = snapshot_tree_find(root->children[i],
+                                         NULL); /* need DFS for is_current */
+        }
+    }
+
+    /* DFS to find is_current node */
+    if (!current) {
+        /* Fallback: walk entire tree */
+        snapshot_node_t **stack = malloc(sizeof(snapshot_node_t *) * 256);
+        int top = 0;
+        stack[top++] = root;
+        while (top > 0) {
+            snapshot_node_t *n = stack[--top];
+            if (n->is_current) { current = n; break; }
+            for (int i = 0; i < n->child_count && top < 255; i++)
+                stack[top++] = n->children[i];
+        }
+        free(stack);
+    }
+
+    if (!current)
+        return;
+
+    /* Build description with state and dirty info */
+    char desc[128];
+    if (is_dirty)
+        snprintf(desc, sizeof(desc), "%s (modified)", vm_state_str);
+    else
+        snprintf(desc, sizeof(desc), "%s", vm_state_str);
+
+    snapshot_node_t *state_node = snapshot_node_new(
+        "__current_state__",
+        desc,
+        "",
+        SNAP_CURRENT_STATE,
+        0);
+
+    if (state_node)
+        snapshot_node_add_child(current, state_node);
 }

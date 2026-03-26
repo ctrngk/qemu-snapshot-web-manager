@@ -10,7 +10,7 @@
 /*  HTML-escape helper: escapes <, >, &, " in user-provided strings   */
 /* ------------------------------------------------------------------ */
 
-static char *html_escape(const char *raw)
+char *html_escape(const char *raw)
 {
     if (!raw)
         return str_dup("");
@@ -294,16 +294,15 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
 
     sb_append(&sb, "    <div class=\"snap-actions\">\n");
 
-    /* Revert button */
+    /* Revert button — loads confirmation dialog */
     sb_appendf(&sb,
         "        <button class=\"btn btn-primary\"\n"
-        "                hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
-        "                hx-target=\"#snapshot-tree\"\n"
-        "                hx-swap=\"innerHTML\"\n"
-        "                hx-confirm=\"Revert to snapshot '%s'? This will discard current state.\">\n"
+        "                hx-get=\"/api/vms/%s/snapshots/%s/revert-confirm\"\n"
+        "                hx-target=\"#snapshot-detail\"\n"
+        "                hx-swap=\"innerHTML\">\n"
         "            \xe2\x86\xa9 Revert\n"
         "        </button>\n",
-        esc_vm, esc_id, esc_id);
+        esc_vm, esc_id);
 
     /* Delete button */
     sb_appendf(&sb,

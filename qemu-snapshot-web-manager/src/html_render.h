@@ -3,6 +3,9 @@
 
 #include "vm_backend.h"
 
+/* HTML-escape a string (malloc'd result, caller frees). */
+char *html_escape(const char *raw);
+
 /* Render the VM list as clickable items for the left panel.
  * Each item triggers selectVm(name) on click and loads snapshot tree.
  * Returns malloc'd HTML string. */

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <limits.h>
@@ -312,6 +313,23 @@ static enum MHD_Result handle_snapshot_tree(struct MHD_Connection *conn,
             "\"date\":\"\",\"type\":\"internal\","
             "\"isCurrent\":false,\"children\":[]}");
     }
+
+    /* Get VM state and add "Current State" virtual node */
+    vm_info_t **vms = NULL;
+    int vcount = 0;
+    if (be->list_vms(&vms, &vcount) == 0) {
+        for (int i = 0; i < vcount; i++) {
+            if (str_eq(vms[i]->name, vm_name)) {
+                int is_dirty = (vms[i]->state == VM_RUNNING ||
+                                vms[i]->state == VM_PAUSED);
+                snapshot_tree_add_current_state(tree,
+                    vm_state_str(vms[i]->state), is_dirty);
+                break;
+            }
+        }
+        be->free_vm_list(vms, vcount);
+    }
+
     char *json = snapshot_tree_to_json(tree);
     enum MHD_Result ret = send_json(conn, MHD_HTTP_OK, json);
     free(json);
@@ -393,6 +411,9 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
                 " hx-post=\"/api/vms/%s/convert-nvram\""
                 " hx-target=\"#snapshot-tree\""
                 " hx-swap=\"innerHTML\""
+                " hx-confirm=\"Convert NVRAM from raw to qcow2? "
+                "This is safe and required for internal snapshots on UEFI VMs. "
+                "Your data will NOT be lost.\""
                 ">🔧 Convert NVRAM</button>"
                 "</div>",
                 vm_name);
@@ -429,19 +450,136 @@ static enum MHD_Result handle_delete_snapshot(struct MHD_Connection *conn,
     return ret;
 }
 
+static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
+                                              const char *vm_name,
+                                              const char *snap_name)
+{
+    vm_backend_t *be = backend_get();
+    if (!be) {
+        char *html = render_error("No backend available");
+        return send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+    }
+
+    /* Check VM state to determine if dirty */
+    int is_dirty = 0;
+    vm_info_t **vms = NULL;
+    int vcount = 0;
+    if (be->list_vms(&vms, &vcount) == 0) {
+        for (int i = 0; i < vcount; i++) {
+            if (str_eq(vms[i]->name, vm_name)) {
+                is_dirty = (vms[i]->state == VM_RUNNING ||
+                            vms[i]->state == VM_PAUSED);
+                break;
+            }
+        }
+        be->free_vm_list(vms, vcount);
+    }
+
+    char *esc_vm   = html_escape(vm_name);
+    char *esc_snap = html_escape(snap_name);
+    char html[4096];
+
+    if (is_dirty) {
+        snprintf(html, sizeof(html),
+            "<div class=\"revert-confirm\">\n"
+            "  <h3>\xe2\x9a\xa0\xef\xb8\x8f Current state has been modified</h3>\n"
+            "  <p>The VM is currently running. Reverting will discard all changes "
+            "since the last snapshot.</p>\n"
+            "  <div class=\"snap-actions\">\n"
+            "    <button class=\"btn btn-primary\"\n"
+            "            hx-post=\"/api/vms/%s/snapshots/%s/revert?save_current=1\"\n"
+            "            hx-target=\"#snapshot-tree\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      \xf0\x9f\x92\xbe Save &amp; Revert\n"
+            "    </button>\n"
+            "    <button class=\"btn btn-danger\"\n"
+            "            hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
+            "            hx-target=\"#snapshot-tree\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      \xe2\x86\xa9 Revert Without Saving\n"
+            "    </button>\n"
+            "    <button class=\"btn btn-ghost\"\n"
+            "            hx-get=\"/api/vms/%s/snapshots/%s\"\n"
+            "            hx-target=\"#snapshot-detail\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      Cancel\n"
+            "    </button>\n"
+            "  </div>\n"
+            "</div>\n",
+            esc_vm, esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
+    } else {
+        snprintf(html, sizeof(html),
+            "<div class=\"revert-confirm\">\n"
+            "  <h3>Revert to snapshot '%s'?</h3>\n"
+            "  <p>This will restore the VM to the state when this snapshot was taken.</p>\n"
+            "  <div class=\"snap-actions\">\n"
+            "    <button class=\"btn btn-primary\"\n"
+            "            hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
+            "            hx-target=\"#snapshot-tree\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      \xe2\x86\xa9 Revert\n"
+            "    </button>\n"
+            "    <button class=\"btn btn-ghost\"\n"
+            "            hx-get=\"/api/vms/%s/snapshots/%s\"\n"
+            "            hx-target=\"#snapshot-detail\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      Cancel\n"
+            "    </button>\n"
+            "  </div>\n"
+            "</div>\n",
+            esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
+    }
+
+    free(esc_vm);
+    free(esc_snap);
+    return send_html(conn, MHD_HTTP_OK, html);
+}
+
 static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
                                               const char *vm_name,
                                               const char *snap_name)
 {
     vm_backend_t *be = backend_get();
-    if (!be || be->revert_snapshot(vm_name, snap_name) != 0) {
+    if (!be) {
+        char *html = render_error("No backend available");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+
+    /* Check if user wants to save current state first */
+    const char *save = MHD_lookup_connection_value(conn,
+        MHD_GET_ARGUMENT_KIND, "save_current");
+    if (save && str_eq(save, "1")) {
+        /* Create auto-snapshot of current state before reverting */
+        time_t now = time(NULL);
+        struct tm *tm = localtime(&now);
+        char auto_name[128];
+        strftime(auto_name, sizeof(auto_name),
+                 "pre-revert-%Y%m%d-%H%M%S", tm);
+        if (be->create_snapshot(vm_name, auto_name,
+                                "Auto-saved before revert", SNAP_INTERNAL) != 0) {
+            char *html = render_error("Failed to save current state before revert");
+            enum MHD_Result ret = send_html_trigger(conn,
+                MHD_HTTP_INTERNAL_SERVER_ERROR, html, "vmStateChanged");
+            free(html);
+            return ret;
+        }
+    }
+
+    if (be->revert_snapshot(vm_name, snap_name) != 0) {
         char *html = render_error("Failed to revert snapshot");
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
         return ret;
     }
-    char *html = render_success("Snapshot reverted");
+    char msg[256];
+    if (save && str_eq(save, "1"))
+        snprintf(msg, sizeof(msg), "Current state saved. Reverted to '%s'", snap_name);
+    else
+        snprintf(msg, sizeof(msg), "Reverted to '%s'", snap_name);
+    char *html = render_success(msg);
     enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
     free(html);
     return ret;
@@ -528,24 +666,71 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
     char *mount_tag  = form_value(body, "mount_tag");
     char *fs_type    = form_value(body, "fs_type");
     char *ro_str     = form_value(body, "read_only");
+    char *confirm_sm = form_value(body, "confirm_shared_memory");
     int read_only    = (ro_str && str_eq(ro_str, "1")) ? 1 : 0;
+    int sm_confirmed = (confirm_sm && str_eq(confirm_sm, "1"));
 
     if (!source_dir || strlen(source_dir) == 0 ||
         !mount_tag  || strlen(mount_tag) == 0) {
         free(source_dir); free(mount_tag); free(fs_type); free(ro_str);
+        free(confirm_sm);
         char *html = render_error("Source directory and mount tag are required");
         enum MHD_Result ret = send_html(conn, MHD_HTTP_BAD_REQUEST, html);
         free(html);
         return ret;
     }
 
+    const char *effective_fs = (fs_type && strlen(fs_type) > 0) ? fs_type : "virtiofs";
+
+    /* If user confirmed shared memory, enable it first */
+    if (sm_confirmed) {
+        lv_enable_shared_memory(vm_name);
+    }
+
     int rc = be->add_shared_folder(vm_name, source_dir, mount_tag,
-                                   read_only,
-                                   (fs_type && strlen(fs_type) > 0) ? fs_type : "virtiofs");
+                                   read_only, effective_fs);
+
+    if (rc == -2) {
+        /* Shared memory required — show confirmation prompt */
+        char *esc_vm  = html_escape(vm_name);
+        char *esc_src = html_escape(source_dir);
+        char *esc_tag = html_escape(mount_tag);
+        char *esc_fs  = html_escape(effective_fs);
+        char msg[4096];
+        snprintf(msg, sizeof(msg),
+            "\xe2\x9a\xa0\xef\xb8\x8f VirtioFS requires <strong>shared memory</strong> "
+            "to be enabled on this VM. This modifies the VM configuration."
+            "<div style=\"margin-top:8px\">"
+            "<form hx-post=\"/api/vms/%s/shared-folders\""
+            " hx-target=\"#folder-notification-persistent\""
+            " hx-swap=\"innerHTML\">"
+            "<input type=\"hidden\" name=\"source_dir\" value=\"%s\">"
+            "<input type=\"hidden\" name=\"mount_tag\" value=\"%s\">"
+            "<input type=\"hidden\" name=\"fs_type\" value=\"%s\">"
+            "<input type=\"hidden\" name=\"read_only\" value=\"%d\">"
+            "<input type=\"hidden\" name=\"confirm_shared_memory\" value=\"1\">"
+            "<button class=\"btn btn-sm btn-primary\" type=\"submit\">"
+            "\xe2\x9c\x85 Enable Shared Memory &amp; Add Folder</button>"
+            " <button type=\"button\" class=\"btn btn-sm btn-ghost\""
+            " onclick=\"this.closest('.alert').remove()\">"
+            "Cancel</button>"
+            "</form></div>",
+            esc_vm, esc_src, esc_tag, esc_fs, read_only);
+        free(esc_vm); free(esc_src); free(esc_tag); free(esc_fs);
+        free(source_dir); free(mount_tag); free(fs_type); free(ro_str);
+        free(confirm_sm);
+
+        char *html = render_error(msg);
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+        free(html);
+        return ret;
+    }
+
     free(source_dir);
     free(mount_tag);
     free(fs_type);
     free(ro_str);
+    free(confirm_sm);
 
     if (rc < 0) {
         const char *detail = lv_get_last_error();
@@ -924,6 +1109,12 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
         /* /api/vms/{name}/snapshots/{snap}/revert */
         if (str_eq(seg5, "revert") && is_post) {
             result = handle_revert_snapshot(connection, vm_name, snap_name);
+            goto cleanup;
+        }
+
+        /* /api/vms/{name}/snapshots/{snap}/revert-confirm */
+        if (str_eq(seg5, "revert-confirm") && str_eq(method, "GET")) {
+            result = handle_revert_confirm(connection, vm_name, snap_name);
             goto cleanup;
         }
 

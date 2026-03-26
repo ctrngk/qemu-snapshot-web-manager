@@ -3,7 +3,7 @@
 
 #include <jansson.h>
 
-typedef enum { SNAP_INTERNAL, SNAP_EXTERNAL } snap_type_t;
+typedef enum { SNAP_INTERNAL, SNAP_EXTERNAL, SNAP_CURRENT_STATE } snap_type_t;
 
 typedef struct snapshot_node {
     char *id;                      /* unique snapshot name/id */
@@ -50,5 +50,12 @@ char *snapshot_tree_to_json(snapshot_node_t *root);
 
 /* Count total nodes in the tree. */
 int snapshot_tree_count(snapshot_node_t *root);
+
+/* Add a virtual "Current State" node as child of the current snapshot.
+ * vm_state_str: "running", "paused", "shut off", etc.
+ * is_dirty: 1 if VM state has been modified since this snapshot. */
+void snapshot_tree_add_current_state(snapshot_node_t *root,
+                                     const char *vm_state_str,
+                                     int is_dirty);
 
 #endif

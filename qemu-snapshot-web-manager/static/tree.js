@@ -138,13 +138,17 @@ function renderTree(data) {
 
     // Circles
     nodes.append('circle')
-        .attr('r', nodeRadius)
+        .attr('r', function(d) {
+            return d.data.type === 'current-state' ? nodeRadius * 0.7 : nodeRadius;
+        })
         .attr('class', function(d) {
             var cls = 'node-circle';
             if (d.data.isCurrent) cls += ' current';
+            if (d.data.type === 'current-state') cls += ' current-state';
             return cls;
         })
         .style('stroke-dasharray', function(d) {
+            if (d.data.type === 'current-state') return '3,2';
             return d.data.type === 'external' ? '4,3' : null;
         })
         .on('click', function(event, d) {
@@ -164,10 +168,27 @@ function renderTree(data) {
 
     // Labels below node
     nodes.append('text')
-        .attr('class', 'node-label')
-        .attr('dy', nodeRadius + 14)
+        .attr('class', function(d) {
+            return d.data.type === 'current-state' ? 'node-label current-state-label' : 'node-label';
+        })
+        .attr('dy', function(d) {
+            return d.data.type === 'current-state' ? (nodeRadius * 0.7 + 14) : (nodeRadius + 14);
+        })
         .attr('text-anchor', 'middle')
-        .text(function(d) { return d.data.name; });
+        .text(function(d) {
+            if (d.data.type === 'current-state') {
+                return 'Current State';
+            }
+            return d.data.name;
+        });
+
+    // VM state label below "Current State" node
+    nodes.filter(function(d) { return d.data.type === 'current-state'; })
+        .append('text')
+        .attr('class', 'current-state-info')
+        .attr('dy', nodeRadius * 0.7 + 28)
+        .attr('text-anchor', 'middle')
+        .text(function(d) { return d.data.description || ''; });
 
     // ★ indicator above current snapshot
     nodes.filter(function(d) { return d.data.isCurrent; })
@@ -184,6 +205,9 @@ function renderTree(data) {
 // ── Node click handler ─────────────────────────────────────────────
 function onNodeClick(event, snap) {
     event.stopPropagation();
+
+    /* Ignore clicks on the virtual "Current State" node */
+    if (snap.data.type === 'current-state') return;
 
     // Update selection styling
     d3.selectAll('.node-circle').classed('selected', false);
