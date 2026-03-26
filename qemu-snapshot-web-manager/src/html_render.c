@@ -353,6 +353,11 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         if (folders[i].read_only) {
             sb_append(&sb, "            <span class=\"badge badge-readonly\">Read Only</span>\n");
         }
+        if (folders[i].mounted == 1) {
+            sb_append(&sb, "            <span class=\"badge badge-mounted\">✓ Mounted</span>\n");
+        } else if (folders[i].mounted == 0) {
+            sb_append(&sb, "            <span class=\"badge badge-unmounted\">Not Mounted</span>\n");
+        }
 
         /* Mount instructions */
         const char *ftype = folders[i].fs_type ? folders[i].fs_type : "virtiofs";
@@ -369,26 +374,62 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         }
 
         sb_append(&sb, "        </div>\n");
-        sb_appendf(&sb,
-            "        <div class=\"folder-actions\">\n"
-            "            <button class=\"btn btn-sm btn-success\"\n"
-            "                    hx-post=\"/api/vms/%s/shared-folders/%s/mount\"\n"
-            "                    hx-target=\"#folder-notification\"\n"
-            "                    hx-swap=\"innerHTML\"\n"
-            "                    hx-confirm=\"Mount %s inside the guest VM?\"\n"
-            "                    title=\"Mount inside guest via QEMU Guest Agent\">\n"
-            "                \xe2\xac\x86\xef\xb8\x8f Mount\n"
-            "            </button>\n"
-            "            <button class=\"btn btn-sm btn-warning\"\n"
-            "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
-            "                    hx-target=\"#folder-notification\"\n"
-            "                    hx-swap=\"innerHTML\"\n"
-            "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
-            "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
-            "                \xe2\xac\x87\xef\xb8\x8f Unmount\n"
-            "            </button>\n",
-            esc_vm, esc_tag, esc_tag,
-            esc_vm, esc_tag, esc_tag);
+
+        int mounted = folders[i].mounted; /* 1=mounted, 0=not mounted, -1=unknown (VM off) */
+
+        sb_append(&sb, "        <div class=\"folder-actions\">\n");
+
+        /* Mount button */
+        if (mounted == 1) {
+            sb_append(&sb,
+                "            <button class=\"btn btn-sm btn-success\" disabled\n"
+                "                    title=\"Already mounted inside guest\">\n"
+                "                \xe2\xac\x86\xef\xb8\x8f Mounted\n"
+                "            </button>\n");
+        } else {
+            sb_appendf(&sb,
+                "            <button class=\"btn btn-sm btn-success\"\n"
+                "                    hx-post=\"/api/vms/%s/shared-folders/%s/mount\"\n"
+                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-swap=\"innerHTML\"\n"
+                "                    hx-confirm=\"Mount %s inside the guest VM?\"\n"
+                "                    title=\"Mount inside guest via QEMU Guest Agent\">\n"
+                "                \xe2\xac\x86\xef\xb8\x8f Mount\n"
+                "            </button>\n",
+                esc_vm, esc_tag, esc_tag);
+        }
+
+        /* Unmount button — only active when confirmed mounted */
+        if (mounted == 1) {
+            sb_appendf(&sb,
+                "            <button class=\"btn btn-sm btn-warning\"\n"
+                "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
+                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-swap=\"innerHTML\"\n"
+                "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
+                "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
+                "                \xe2\xac\x87\xef\xb8\x8f Unmount\n"
+                "            </button>\n",
+                esc_vm, esc_tag, esc_tag);
+        } else if (mounted == 0) {
+            sb_append(&sb,
+                "            <button class=\"btn btn-sm btn-warning\" disabled\n"
+                "                    title=\"Not currently mounted\">\n"
+                "                \xe2\xac\x87\xef\xb8\x8f Unmount\n"
+                "            </button>\n");
+        } else {
+            /* Unknown — show both enabled, let the action fail gracefully */
+            sb_appendf(&sb,
+                "            <button class=\"btn btn-sm btn-warning\"\n"
+                "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
+                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-swap=\"innerHTML\"\n"
+                "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
+                "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
+                "                \xe2\xac\x87\xef\xb8\x8f Unmount\n"
+                "            </button>\n",
+                esc_vm, esc_tag, esc_tag);
+        }
         sb_appendf(&sb,
             "        <button class=\"btn btn-sm btn-danger\"\n"
             "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"

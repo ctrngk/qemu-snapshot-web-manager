@@ -400,6 +400,11 @@ static enum MHD_Result handle_shared_folders(struct MHD_Connection *conn,
         free(html);
         return ret;
     }
+
+    /* Check mount status inside guest (if VM running + guest agent available) */
+    if (be->check_mount_status)
+        be->check_mount_status(vm_name, folders, count);
+
     char *html = render_shared_folders(vm_name, folders, count);
     enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
@@ -544,8 +549,10 @@ static enum MHD_Result handle_mount_shared_folder(struct MHD_Connection *conn,
         return ret;
     }
 
-    char *html = render_success("Mounted successfully inside guest at /mnt/&lt;tag&gt;");
-    enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Mounted successfully at /mnt/%s", mount_tag);
+    char *html = render_success(msg);
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
     free(html);
     return ret;
 }
@@ -579,7 +586,7 @@ static enum MHD_Result handle_unmount_shared_folder(struct MHD_Connection *conn,
     }
 
     char *html = render_success("Unmounted successfully inside guest");
-    enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
     free(html);
     return ret;
 }

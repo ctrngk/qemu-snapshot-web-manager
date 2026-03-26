@@ -26,6 +26,7 @@ typedef struct {
     char *mount_tag;      /* guest mount tag */
     char *fs_type;        /* "virtiofs" or "9p" */
     int read_only;
+    int mounted;          /* 1 if currently mounted in guest, 0 otherwise, -1 unknown */
 } shared_folder_t;
 
 /* ─── Backend vtable ─── */
@@ -69,6 +70,10 @@ typedef struct vm_backend {
     int  (*mount_shared_folder)(const char *vm_name, const char *mount_tag,
                                  const char *fs_type);
     int  (*unmount_shared_folder)(const char *vm_name, const char *mount_tag);
+
+    /* Check mount status inside guest via guest agent */
+    int  (*check_mount_status)(const char *vm_name,
+                                shared_folder_t *folders, int count);
 } vm_backend_t;
 
 /* ─── Backend registry ─── */
