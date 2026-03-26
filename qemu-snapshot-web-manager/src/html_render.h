@@ -20,7 +20,7 @@ char *render_create_snapshot_form(const char *vm_name);
 
 /* Render the shared folders list.
  * Returns malloc'd HTML string. */
-char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count);
+char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count, int automount_active);
 
 /* Render the add-shared-folder form.
  * Returns malloc'd HTML string. */

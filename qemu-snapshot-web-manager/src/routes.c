@@ -405,7 +405,12 @@ static enum MHD_Result handle_shared_folders(struct MHD_Connection *conn,
     if (be->check_mount_status)
         be->check_mount_status(vm_name, folders, count);
 
-    char *html = render_shared_folders(vm_name, folders, count);
+    /* Check auto-mount timer status */
+    int automount_active = -1;
+    if (be->check_automount_status)
+        automount_active = be->check_automount_status(vm_name);
+
+    char *html = render_shared_folders(vm_name, folders, count, automount_active);
     enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
     be->free_shared_folders(folders, count);
@@ -598,6 +603,39 @@ static enum MHD_Result handle_unmount_shared_folder(struct MHD_Connection *conn,
 void routes_init(void)
 {
     log_msg(LOG_INFO, "Routes initialized");
+}
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/vms/{name}/shared-folders/automount                     */
+/* ------------------------------------------------------------------ */
+
+static enum MHD_Result handle_automount_setup(struct MHD_Connection *conn,
+                                               const char *vm_name)
+{
+    vm_backend_t *be = backend_get();
+    if (!be || !be->setup_automount) {
+        char *html = render_error("Backend does not support auto-mount setup");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+
+    char *msg = NULL;
+    int rc = be->setup_automount(vm_name, &msg);
+    if (rc != 0) {
+        char *html = render_error(msg ? msg : "Failed to setup auto-mount");
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                                                html, "sharedFoldersChanged");
+        free(html);
+        free(msg);
+        return ret;
+    }
+
+    char *html = render_success("Auto-mount service installed and started in guest VM");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    free(html);
+    free(msg);
+    return ret;
 }
 
 /* ------------------------------------------------------------------ */
@@ -821,6 +859,8 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
             result = handle_mount_shared_folder(connection, vm_name, seg4);
         } else if (seg4 && seg5 && str_eq(seg5, "unmount") && is_post) {
             result = handle_unmount_shared_folder(connection, vm_name, seg4);
+        } else if (seg4 && str_eq(seg4, "automount") && is_post) {
+            result = handle_automount_setup(connection, vm_name);
         } else if (seg4 && is_delete) {
             result = handle_remove_shared_folder(connection, vm_name, seg4);
         } else {

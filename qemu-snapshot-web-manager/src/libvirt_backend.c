@@ -750,18 +750,33 @@ static int lv_remove_shared_folder(const char *vm_name, const char *mount_tag)
  * If out_msg is not NULL, writes an error/success message (caller must free). */
 static int guest_exec(virDomainPtr dom, const char *command, char **out_msg)
 {
+    /* JSON-escape the command to safely embed in the JSON string */
+    char *escaped_cmd = json_escape(command);
+    if (!escaped_cmd) {
+        if (out_msg) *out_msg = strdup("Failed to allocate memory for command");
+        return -1;
+    }
+
     /* Build guest-exec JSON command.
      * Use /usr/bin/bash with explicit PATH for full command availability. */
-    char cmd_json[2048];
-    snprintf(cmd_json, sizeof(cmd_json),
+    size_t json_len = strlen(escaped_cmd) + 256;
+    char *cmd_json = malloc(json_len);
+    if (!cmd_json) {
+        free(escaped_cmd);
+        if (out_msg) *out_msg = strdup("Failed to allocate memory for JSON command");
+        return -1;
+    }
+    snprintf(cmd_json, json_len,
         "{\"execute\":\"guest-exec\","
         "\"arguments\":{\"path\":\"/usr/bin/bash\","
         "\"arg\":[\"-c\",\"%s\"],"
         "\"env\":[\"PATH=/usr/sbin:/usr/bin:/sbin:/bin\"],"
         "\"capture-output\":true}}",
-        command);
+        escaped_cmd);
+    free(escaped_cmd);
 
     char *result = virDomainQemuAgentCommand(dom, cmd_json, 30, 0);
+    free(cmd_json);
     if (!result) {
         if (out_msg) {
             virErrorPtr err = virGetLastError();
@@ -1022,6 +1037,141 @@ static int lv_check_mount_status(const char *vm_name,
 }
 
 /* ------------------------------------------------------------------ */
+/*  Auto-mount: check if qemu-automount.timer is active in guest      */
+/* ------------------------------------------------------------------ */
+
+static int lv_check_automount_status(const char *vm_name)
+{
+    if (!conn) return -1;
+    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    if (!dom) return -1;
+
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
+        virDomainFree(dom);
+        return -1;
+    }
+
+    char *msg = NULL;
+    int rc = guest_exec(dom, "systemctl is-active qemu-automount.timer", &msg);
+    virDomainFree(dom);
+    free(msg);
+
+    if (rc == 0) return 1;   /* active */
+    return 0;                 /* inactive or not installed */
+}
+
+/* ------------------------------------------------------------------ */
+/*  Auto-mount: install systemd service in guest                      */
+/* ------------------------------------------------------------------ */
+
+static int lv_setup_automount(const char *vm_name, char **out_msg)
+{
+    if (!conn) {
+        if (out_msg) *out_msg = strdup("Not connected to libvirt");
+        return -1;
+    }
+    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    if (!dom) {
+        if (out_msg) *out_msg = strdup("VM not found");
+        return -1;
+    }
+
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
+        virDomainFree(dom);
+        if (out_msg) *out_msg = strdup("VM is not running");
+        return -1;
+    }
+
+    char *msg = NULL;
+    int rc;
+
+    /* Step 1: Write the auto-mount script */
+    rc = guest_exec(dom,
+        "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
+        "#!/bin/bash\n"
+        "for tag_path in /sys/fs/virtiofs/*/tag; do\n"
+        "    [ -e \"$tag_path\" ] || continue\n"
+        "    TAG=$(cat \"$tag_path\")\n"
+        "    MOUNT_POINT=\"/media/$TAG\"\n"
+        "    mkdir -p \"$MOUNT_POINT\"\n"
+        "    if ! mountpoint -q \"$MOUNT_POINT\"; then\n"
+        "        mount -t virtiofs \"$TAG\" \"$MOUNT_POINT\" >/dev/null 2>&1\n"
+        "    fi\n"
+        "done\n"
+        "SCRIPT\n"
+        "chmod +x /usr/local/bin/qemu-automount",
+        &msg);
+    if (rc != 0) {
+        log_msg(LOG_ERROR, "automount: failed to write script: %s", msg ? msg : "unknown");
+        if (out_msg) *out_msg = msg; else free(msg);
+        virDomainFree(dom);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 2: Write the systemd service file */
+    rc = guest_exec(dom,
+        "cat > /etc/systemd/system/qemu-automount.service << 'EOF'\n"
+        "[Unit]\n"
+        "Description=QEMU/KVM VirtioFS Auto-Mounter\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "ExecStart=/usr/local/bin/qemu-automount\n"
+        "EOF",
+        &msg);
+    if (rc != 0) {
+        log_msg(LOG_ERROR, "automount: failed to write service: %s", msg ? msg : "unknown");
+        if (out_msg) *out_msg = msg; else free(msg);
+        virDomainFree(dom);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 3: Write the timer file */
+    rc = guest_exec(dom,
+        "cat > /etc/systemd/system/qemu-automount.timer << 'EOF'\n"
+        "[Unit]\n"
+        "Description=Run QEMU Auto-Mounter every 5 seconds\n"
+        "\n"
+        "[Timer]\n"
+        "OnBootSec=5s\n"
+        "OnUnitActiveSec=5s\n"
+        "AccuracySec=100ms\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+        "EOF",
+        &msg);
+    if (rc != 0) {
+        log_msg(LOG_ERROR, "automount: failed to write timer: %s", msg ? msg : "unknown");
+        if (out_msg) *out_msg = msg; else free(msg);
+        virDomainFree(dom);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 4: Enable and start the timer */
+    rc = guest_exec(dom,
+        "systemctl daemon-reload && systemctl enable --now qemu-automount.timer",
+        &msg);
+    if (rc != 0) {
+        log_msg(LOG_ERROR, "automount: failed to enable timer: %s", msg ? msg : "unknown");
+        if (out_msg) *out_msg = msg; else free(msg);
+        virDomainFree(dom);
+        return -1;
+    }
+    free(msg);
+
+    log_msg(LOG_INFO, "Auto-mount service installed and started in guest %s", vm_name);
+    virDomainFree(dom);
+    if (out_msg) *out_msg = NULL;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /*  vtable                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1046,6 +1196,8 @@ static vm_backend_t libvirt_be = {
     .mount_shared_folder   = lv_mount_shared_folder,
     .unmount_shared_folder = lv_unmount_shared_folder,
     .check_mount_status    = lv_check_mount_status,
+    .check_automount_status = lv_check_automount_status,
+    .setup_automount        = lv_setup_automount,
 };
 
 vm_backend_t *libvirt_backend_get(void)

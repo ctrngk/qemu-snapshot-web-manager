@@ -95,7 +95,7 @@ static void test_render_shared_folders(void)
                            .mount_tag = "tmpdata", .fs_type = "9p", .read_only = 1 };
     shared_folder_t folders[] = { f1, f2 };
 
-    char *html = render_shared_folders("testvm", folders, 2);
+    char *html = render_shared_folders("testvm", folders, 2, 0);
     assert(html != NULL);
     assert(strstr(html, "/home/user/share") != NULL);
     assert(strstr(html, "myshare") != NULL);
@@ -103,7 +103,7 @@ static void test_render_shared_folders(void)
     free(html);
 
     /* Empty */
-    char *empty = render_shared_folders("testvm", NULL, 0);
+    char *empty = render_shared_folders("testvm", NULL, 0, -1);
     assert(strstr(empty, "No shared folders") != NULL);
     free(empty);
 

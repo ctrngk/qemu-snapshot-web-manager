@@ -328,7 +328,7 @@ char *render_create_snapshot_form(const char *vm_name)
 /*  render_shared_folders                                             */
 /* ------------------------------------------------------------------ */
 
-char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count)
+char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int count, int automount_active)
 {
     if (!folders || count <= 0)
         return str_dup("<p class=\"placeholder\">No shared folders configured</p>");
@@ -339,6 +339,27 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
     sb_init(&sb, (size_t)count * 512);
 
     sb_append(&sb, "<div id=\"folder-notification\"></div>\n");
+
+    /* Auto-mount status bar */
+    sb_append(&sb, "<div class=\"automount-status\">\n");
+    if (automount_active == 1) {
+        sb_append(&sb,
+            "    <span class=\"badge badge-mounted\">\xe2\x9c\x93 Auto-Mount Active</span>\n"
+            "    <span class=\"automount-hint\">VirtioFS shares are automatically mounted to /media/</span>\n");
+    } else if (automount_active == 0) {
+        sb_appendf(&sb,
+            "    <button class=\"btn btn-sm btn-primary\"\n"
+            "            hx-post=\"/api/vms/%s/shared-folders/automount\"\n"
+            "            hx-target=\"#folder-notification\"\n"
+            "            hx-swap=\"innerHTML\"\n"
+            "            hx-confirm=\"Install auto-mount service in the guest VM?"
+            " This adds a systemd timer that mounts VirtioFS shares to /media/ automatically.\">\n"
+            "        \xe2\x9a\x99\xef\xb8\x8f Setup Auto-Mount\n"
+            "    </button>\n", esc_vm);
+    }
+    /* If automount_active == -1 (unknown/error), show nothing */
+    sb_append(&sb, "</div>\n");
+
     sb_append(&sb, "<div class=\"shared-folders-list\">\n");
 
     for (int i = 0; i < count; i++) {

@@ -680,6 +680,23 @@ button:disabled, .btn:disabled {
     color: var(--badge-unmounted-text);
 }
 
+/* ===== Auto-mount status bar ===== */
+.automount-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--border);
+}
+
+.automount-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
 /* ===== Shared Folders ===== */
 .shared-folders-list {
     display: flex;

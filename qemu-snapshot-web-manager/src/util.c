@@ -196,3 +196,30 @@ char *base64_decode(const char *src, size_t *out_len)
     if (out_len) *out_len = j;
     return (char *)out;
 }
+
+/* Escape a string for safe embedding inside a JSON string value.
+ * Handles: " → \", \ → \\, newline → \n, tab → \t, CR → \r
+ * Returns malloc'd string. Caller frees. */
+char *json_escape(const char *src)
+{
+    if (!src) return str_dup("");
+
+    size_t len = strlen(src);
+    /* Worst case: every char needs escaping → 2x */
+    char *out = malloc(len * 2 + 1);
+    if (!out) return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        switch (src[i]) {
+        case '"':  out[j++] = '\\'; out[j++] = '"';  break;
+        case '\\': out[j++] = '\\'; out[j++] = '\\'; break;
+        case '\n': out[j++] = '\\'; out[j++] = 'n';  break;
+        case '\r': out[j++] = '\\'; out[j++] = 'r';  break;
+        case '\t': out[j++] = '\\'; out[j++] = 't';  break;
+        default:   out[j++] = src[i]; break;
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
