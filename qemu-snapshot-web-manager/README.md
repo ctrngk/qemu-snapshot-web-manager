@@ -11,10 +11,11 @@
 - **Visual snapshot tree** — interactive D3.js tree visualization, similar to VirtualBox's snapshot view
 - **Internal & external snapshot management** — create, delete, revert, and merge snapshots
 - **Auto-merge for external snapshots** — block commit support to flatten snapshot chains
-- **Shared folder detection** — discovers virtiofs shared directories
+- **Shared folder management** — list (virtiofs + 9p), add, detach, mount/unmount via guest agent, real-time mount status detection, server-side directory browser for selecting source paths
+- **Guest agent integration** — mount and unmount shared folders inside VMs through QEMU guest agent
 - **VM lifecycle controls** — start, stop, and pause virtual machines
 - **Real-time status updates** — keeps the UI in sync with VM state
-- **Cross-platform** — Linux (libvirt/KVM) + macOS (libvirt/HVF, UTM planned)
+- **Linux-focused** — Linux (libvirt/KVM) with experimental macOS support (libvirt/HVF)
 - **Zero JS toolchain** — no npm, no node, no build step — just C and a browser
 - **Tiny footprint** — single ~100KB binary, 14KB of HTMX + D3 loaded from CDN
 
@@ -60,7 +61,21 @@ The `make install` target installs:
 - Static assets → `/usr/local/share/qswm/static/`
 - Systemd service → `/etc/systemd/system/qemu-snapshot-web-manager.service`
 
-### macOS
+### Prerequisites for shared folder mounting
+
+To mount/unmount shared folders inside VMs, install the QEMU guest agent in the guest OS:
+
+```bash
+# Fedora/RHEL
+sudo dnf install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+
+# Debian/Ubuntu
+sudo apt install qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+### macOS (experimental)
 
 ```bash
 brew install libmicrohttpd libvirt jansson pkg-config
@@ -113,8 +128,8 @@ The interface uses a three-panel layout:
 - **C backend** — [libmicrohttpd](https://www.gnu.org/software/libmicrohttpd/) serves both the REST API and static files
 - **HTMX** — returns HTML fragments for partial-page UI updates (no SPA framework needed)
 - **D3.js** — renders an interactive snapshot tree from a JSON endpoint
-- **Backend abstraction** — a hypervisor abstraction layer allows supporting multiple backends (libvirt, UTM)
-- **Codebase size** — ~2000 lines of C, ~300 lines of JavaScript
+- **Backend abstraction** — a hypervisor abstraction layer (vtable pattern) allows supporting multiple backends (libvirt, UTM stub)
+- **Codebase size** — ~4000 lines of C, ~300 lines of JavaScript
 
 ## API Reference
 
@@ -133,14 +148,21 @@ The interface uses a three-panel layout:
 | `POST` | `/api/vms/{name}/snapshots/{snap}/revert` | Revert to snapshot |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/merge` | Merge external snapshot |
 | `GET` | `/api/vms/{name}/shared-folders` | List shared folders (HTML) |
+| `GET` | `/api/vms/{name}/shared-folders/form` | Add shared folder form (HTML) |
+| `POST` | `/api/vms/{name}/shared-folders` | Add shared folder |
+| `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | Detach shared folder |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | Mount inside guest VM |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | Unmount inside guest VM |
+| `GET` | `/api/browse?path=...` | Server-side directory browser (HTML) |
 
 ## Known Limitations
 
-- **UTM snapshots not supported** — `utmctl` has no snapshot management commands
+- **UTM backend is a stub** — `utmctl` has no snapshot management commands; macOS support is experimental
 - **No authentication** — designed for localhost use; do not expose to untrusted networks
 - **No WebSocket** — UI updates are polling-based, not push-based
 - **Single-disk assumption** — external snapshot merge (block commit) assumes VMs have a single disk
 - **Requires root** — `qemu:///system` connections require root privileges
+- **Guest agent required** — shared folder mount/unmount requires QEMU guest agent installed in the VM
 
 ## Development
 
@@ -155,21 +177,38 @@ make clean      # remove build artifacts
 
 ```
 qemu-snapshot-web-manager/
-├── src/                  # C source files
-│   ├── main.c            # entry point, argument parsing, HTTP server setup
-│   ├── api_handlers.c    # REST API route handlers
-│   ├── snapshot_manager.c # snapshot CRUD operations via libvirt
-│   ├── hypervisor.c      # hypervisor abstraction layer
-│   └── ...
-├── static/               # frontend assets (HTML, CSS, JS)
-│   ├── index.html
-│   ├── app.js            # HTMX interactions + D3 snapshot tree
-│   └── style.css
+├── src/
+│   ├── main.c            # entry point, argument parsing, signal handlers
+│   ├── server.c/.h       # HTTP server (libmicrohttpd), static file serving, MIME detection
+│   ├── routes.c/.h       # API route dispatcher, request/response helpers
+│   ├── vm_backend.c/.h   # hypervisor abstraction layer (vtable pattern)
+│   ├── libvirt_backend.c/.h  # libvirt implementation of vm_backend_t
+│   ├── utm_backend.c/.h  # UTM implementation (macOS only, Linux stub)
+│   ├── snapshot.c/.h     # snapshot tree data structure + JSON serialization
+│   ├── html_render.c/.h  # HTML fragment generators for HTMX responses
+│   └── util.c/.h         # logging, string helpers, URL decoding
+├── static/
+│   ├── index.html        # app shell (HTMX attributes, 3-column layout)
+│   ├── styles.css        # CSS (grid layout, custom properties, responsive)
+│   └── tree.js           # D3.js snapshot tree visualization
+├── docs/
+│   ├── getting-started.md
+│   ├── user-guide.md
+│   └── developer-guide.md
+├── scripts/              # helper scripts (setup, build, dev, test, install, uninstall, deps)
 ├── systemd/              # systemd service file
-├── tests/                # unit tests
+├── tests/
+│   ├── test_snapshot_tree.c   # 7 snapshot tree tests
+│   └── test_html_render.c     # 6 HTML renderer tests
 ├── Makefile
 └── README.md
 ```
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — installation, first run, basic usage
+- [User Guide](docs/user-guide.md) — snapshots, shared folders, VM management
+- [Developer Guide](docs/developer-guide.md) — architecture, building, testing, contributing
 
 ## License
 

@@ -45,11 +45,14 @@ qemu-snapshot-web-manager/
 ├── Makefile                    # Build system (gcc, pkg-config, auto-dependency)
 ├── README.md                   # Project overview
 ├── docs/
+│   ├── getting-started.md     # Quick start guide
 │   ├── user-guide.md          # End-user documentation
 │   └── developer-guide.md     # This file
 ├── scripts/                    # Helper scripts
+│   ├── setup.sh               # One-command setup: deps + build + run
 │   ├── build.sh               # Build the project
 │   ├── dev.sh                 # Development server with auto-rebuild
+│   ├── deps.sh                # Check/install build dependencies
 │   ├── install.sh             # Install system-wide
 │   ├── uninstall.sh           # Remove system-wide install
 │   └── test.sh                # Run tests
@@ -193,6 +196,11 @@ typedef struct vm_backend {
     // Shared folders
     int  (*list_shared_folders)(const char *vm_name, shared_folder_t **folders, int *count);
     void (*free_shared_folders)(shared_folder_t *folders, int count);
+    int  (*add_shared_folder)(const char *vm_name, const char *source_dir, const char *mount_tag, const char *fs_type, int read_only);
+    int  (*remove_shared_folder)(const char *vm_name, const char *mount_tag);
+    int  (*mount_shared_folder)(const char *vm_name, const char *mount_tag, char **error_html);
+    int  (*unmount_shared_folder)(const char *vm_name, const char *mount_tag, char **error_html);
+    int  (*check_mount_status)(const char *vm_name, shared_folder_t *folders, int count);
 } vm_backend_t;
 ```
 
@@ -204,7 +212,7 @@ typedef struct vm_backend {
 - `vm_state_t` — `VM_RUNNING`, `VM_PAUSED`, `VM_SHUTOFF`, `VM_OTHER`
 - `snap_type_t` — `SNAP_INTERNAL`, `SNAP_EXTERNAL`
 - `vm_info_t` — `name`, `uuid`, `state`, `vcpus`, `memory_kb`
-- `shared_folder_t` — `source_dir`, `mount_tag`, `read_only`
+- `shared_folder_t` — `source_dir`, `mount_tag`, `fs_type` (`"virtiofs"` or `"9p"`), `read_only`, `mounted` (`1` = mounted, `0` = not mounted, `-1` = unknown/agent unavailable)
 
 **Backend implementations:**
 - **libvirt** (`libvirt_backend.c`): Full implementation via the libvirt C API. Accessed via `libvirt_backend_get()`.
@@ -306,6 +314,8 @@ typedef struct {
 | `render_snapshot_detail()` | Snapshot metadata panel with revert/delete/merge buttons |
 | `render_create_snapshot_form()` | Modal form with name/description/type fields |
 | `render_shared_folders()` | Shared folder list with mount tags and paths |
+| `render_add_shared_folder_form()` | Add shared folder form with directory browser |
+| `render_directory_listing()` | Server-side directory browser for modal |
 | `render_success()` | `<div class="alert alert-success">` message |
 | `render_error()` | `<div class="alert alert-error">` message |
 | `render_error_html()` | Rich HTML error message with structured details, SELinux fix instructions, and distro-specific install commands |
@@ -403,12 +413,13 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `DELETE` | `/api/vms/{name}/snapshots/{snap}` | — | HTML success/error | Passes `auto_merge=1` to backend |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/revert` | — | HTML success/error | HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/merge` | — | HTML success/error | Block commit for external snapshots |
-| `GET` | `/api/vms/{name}/shared-folders` | — | HTML fragment | Shared folders list for VM |
+| `GET` | `/api/vms/{name}/shared-folders` | — | HTML fragment | Shared folders list for VM; includes real-time mount status via guest agent `check_mount_status()` |
+| `GET` | `/api/vms/{name}/shared-folders/form` | — | HTML fragment | Add shared folder form modal |
 | `GET` | `/api/browse?path=...` | — | HTML fragment | Server-side directory browser; returns folder listing for the given path |
-| `POST` | `/api/vms/{name}/shared-folders` | URL-encoded: `source_dir`, `mount_tag` | HTML success/error | Add virtiofs shared folder to VM; HX-Trigger: `vmStateChanged` |
-| `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | — | HTML success/error | Remove (detach) shared folder from VM; HX-Trigger: `vmStateChanged` |
-| `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | — | HTML success/error | Mount shared folder inside guest via QEMU Guest Agent |
-| `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | — | HTML success/error | Unmount shared folder inside guest via QEMU Guest Agent |
+| `POST` | `/api/vms/{name}/shared-folders` | URL-encoded: `source_dir`, `mount_tag`, `fs_type`, `read_only` | HTML success/error | Add virtiofs/9p shared folder; auto-enables shared memory for virtiofs; HX-Trigger: `vmStateChanged` |
+| `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | — | HTML success/error | Detach shared folder; HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | — | HTML success/error | Mount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
+| `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | — | HTML success/error | Unmount via QEMU Guest Agent (`guest-exec`); HX-Trigger: `vmStateChanged` |
 
 `{name}` is the VM name (URL-decoded). `{snap}` is the snapshot ID (URL-decoded).
 
@@ -529,6 +540,25 @@ The mount/unmount feature communicates with the QEMU Guest Agent running inside 
      - SELinux fix instructions (`semanage permissive -a virt_qemu_ga_t`)
      - Distro-specific commands to install `qemu-guest-agent` and `policycoreutils-python-utils`
 
+3. **Mount status detection:**
+   - Before returning shared folder list, `check_mount_status()` is called
+   - Executes `findmnt --json` inside the VM via `guest-exec`
+   - Parses JSON output to match mounted filesystems against shared folder tags
+   - Sets `folders[i].mounted` to 1 (mounted), 0 (not mounted), or -1 (agent unavailable)
+   - Status is reflected in UI as "✓ Mounted" / "Not Mounted" badges
+
+4. **Virtiofs shared memory auto-configuration:**
+   - When adding a virtiofs shared folder, the backend checks if the VM has `<memoryBacking>` with `<access mode='shared'/>`
+   - If missing, it automatically injects the required XML block:
+     ```xml
+     <memoryBacking>
+       <source type='memfd'/>
+       <access mode='shared'/>
+     </memoryBacking>
+     ```
+   - This is required for virtiofs to work. Without shared memory, virtiofs mounts will fail.
+   - The check is skipped for 9p shared folders (they don't require shared memory).
+
 ### SELinux Considerations
 
 On Fedora/RHEL guests, SELinux confines the guest agent under the `virt_qemu_ga_t` domain, which by default does not allow arbitrary command execution (including `mount`). The recommended fix is:
@@ -611,11 +641,18 @@ curl -X POST http://localhost:9091/api/vms/myvm/snapshots/snap1/merge
 # List shared folders
 curl http://localhost:9091/api/vms/myvm/shared-folders
 
+# Get add shared folder form
+curl http://localhost:9091/api/vms/myvm/shared-folders/form
+
 # Browse directories on the host
 curl "http://localhost:9091/api/browse?path=/home"
 
-# Add a shared folder
-curl -X POST -d 'source_dir=/home/user/shared&mount_tag=myshare' \
+# Add a shared folder (virtiofs)
+curl -X POST -d 'source_dir=/home/user/shared&mount_tag=myshare&fs_type=virtiofs&read_only=0' \
+    http://localhost:9091/api/vms/myvm/shared-folders
+
+# Add a shared folder (9p)
+curl -X POST -d 'source_dir=/home/user/data&mount_tag=data&fs_type=9p&read_only=1' \
     http://localhost:9091/api/vms/myvm/shared-folders
 
 # Remove (detach) a shared folder

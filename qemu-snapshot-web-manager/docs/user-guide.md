@@ -213,6 +213,11 @@ delete, or merge the snapshot. We'll cover those in detail in
 
 At the very bottom of this panel, you'll see the **Shared Folders** section,
 which lists any folders shared between your host computer and the selected VM.
+Each shared folder shows a **mount status badge** — a green "✓ Mounted" badge
+if the folder is actively accessible inside the VM, or a gray "Not Mounted"
+badge if it isn't. You'll also find **Mount** and **Unmount** buttons next to
+each folder, and an **"+ Add Shared Folder"** button that includes a handy
+directory browser for picking folders on your host computer.
 
 <!-- Screenshot: Right panel showing snapshot details with action buttons and shared folders -->
 
@@ -378,19 +383,23 @@ on your host, and the VM can see them too.
 
 ### How they appear in QSWM
 
-The tool automatically detects shared folders that use **virtiofs** (a fast
-file-sharing technology for VMs). You'll find them in the **right panel** under
-the "Shared Folders" heading, below the snapshot details.
+The tool automatically detects shared folders that use **virtiofs** (a fast,
+modern file-sharing technology) or **9p** (an older but widely compatible
+protocol). You'll find them in the **right panel** under the "Shared Folders"
+heading, below the snapshot details.
 
 For each shared folder, you'll see:
 
 - **Mount tag** — The name the VM uses to find the folder (like a label).
 - **Source path** — The actual folder location on your host computer
   (e.g., `/home/you/shared`).
-- **Read-only status** — Whether the VM can only read files, or read and write
-  them.
+- **Filesystem type** — Either "virtiofs" (fast, modern) or "9p" (compatible,
+  older).
+- **Mount status badge** — A green "✓ Mounted" badge if the folder is actively
+  mounted inside the VM, or a gray "Not Mounted" badge if it isn't. The status
+  is detected automatically in real-time when the guest agent is available.
 
-<!-- Screenshot: Shared folders section in the right panel showing mount tags and paths -->
+<!-- Screenshot: Shared folders section in the right panel showing mount tags, paths, and status badges -->
 
 ### Adding a Shared Folder
 
@@ -398,8 +407,15 @@ You can add shared folders directly from the web interface:
 
 1. In the **Shared Folders** section (right panel), click **"+ Add Shared Folder"**.
 2. Fill in the form:
-   - **Source Directory** — The folder on your host computer you want to share. You can type a path or click **"Browse..."** to pick a folder using the built-in directory browser.
-   - **Mount Tag** — A label the VM uses to identify this folder. One is auto-generated for you, but you can change it.
+   - **Source Directory** — The folder on your host computer you want to share.
+     You can type a path directly, or click the **"Browse..."** button to open
+     a **directory browser modal**. The browser shows folders on your computer —
+     click a folder to navigate into it, and click **"Select"** to choose it.
+   - **Mount Tag** — A label the VM uses to identify this folder. One is
+     auto-generated from the directory name (e.g., selecting
+     `/home/user/shared` generates tag `shared`), but you can change it.
+   - **Filesystem Type** — Choose **virtiofs** (the default) for the best
+     performance, or **9p** if virtiofs doesn't work on your system.
 3. Click **Add**.
 
 The shared folder will be added to the VM's configuration. The VM may need to be restarted for it to take effect.
@@ -416,6 +432,11 @@ Once a shared folder is configured, you need to **mount** it inside the VM to ac
 
 - Click **"Mount"** next to a shared folder to mount it inside the VM at `/mnt/<tag>`.
 - Click **"Unmount"** to disconnect it.
+
+The buttons are smart — the **Mount** button is disabled (grayed out) when the
+folder is already mounted, so you can't accidentally double-mount. Likewise,
+**Unmount** is disabled when the folder isn't mounted. After each operation, the
+mount status badge updates automatically to reflect the current state.
 
 If the guest agent is not installed, the UI will show you the manual mount commands you can run inside the VM yourself.
 
@@ -479,6 +500,13 @@ need to, and merge or delete branches you're done with.
 
 ✅ **Shut down the VM before merging.** External snapshot merges work best (and
 most reliably) when the VM is powered off.
+
+✅ **Install the guest agent for the best experience.** With the QEMU Guest
+Agent, you can mount and unmount shared folders with one click, and the UI
+shows real-time mount status.
+
+✅ **Use virtiofs for better performance.** If your system supports it, virtiofs
+is significantly faster than 9p for shared folders.
 
 ---
 
@@ -578,6 +606,23 @@ If you select a VM and the tree area is blank:
 - If you know you have snapshots, try clicking the refresh button or
   reloading the page.
 
+### Shared folder shows "Not Mounted" even though I mounted it manually
+
+QSWM detects mount status using the guest agent's `findmnt` command. Make sure
+the guest agent is running inside the VM and the folder is mounted at
+`/mnt/<tag>` (the path QSWM expects).
+
+### Mount button is grayed out
+
+This means the folder is already mounted — the button disables itself to prevent
+double-mounting. If you need to remount, click **Unmount** first, then Mount.
+
+### Filesystem type: which should I choose?
+
+Use **virtiofs** (the default) for the best performance. It's fast and modern.
+Only choose **9p** if virtiofs doesn't work on your system — 9p is slower but
+works on a wider range of setups.
+
 ---
 
 ## 9. Glossary
@@ -597,6 +642,12 @@ If you select a VM and the tree area is blank:
 | **Host** | Your real, physical computer — the one running the VMs. |
 | **Guest** | The virtual machine itself — the simulated computer running inside the host. |
 | **QEMU Guest Agent** | A helper service running inside the VM that lets the host send commands to the guest (like mounting folders). Required for the Mount/Unmount feature. |
+| **9p** | An older but widely compatible protocol for sharing folders between host and guest. Works on more systems but is slower than virtiofs. |
+| **Mount** | Making a shared folder accessible inside the VM. Like plugging in a USB drive — the folder appears at a location (e.g., `/mnt/myshare`) where you can access it. |
+| **Unmount** | Disconnecting a mounted shared folder inside the VM. Like safely ejecting a USB drive. |
+| **Directory browser** | A built-in file picker in QSWM that lets you navigate folders on your host computer to select a shared folder source path. |
+| **Mount tag** | A short label (like a name tag) that identifies a shared folder. The VM uses this tag to find and mount the folder. |
+| **Mount status** | Shows whether a shared folder is currently accessible inside the VM. "✓ Mounted" means the folder is active and accessible. "Not Mounted" means it's configured but not yet connected. |
 | **Detach** | Removes a shared folder configuration from a VM. Does NOT delete any files on the host. |
 
 ---
