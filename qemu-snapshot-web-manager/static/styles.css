@@ -1005,6 +1005,15 @@ textarea.form-input {
 .node-circle.current {
     fill: var(--tree-node-current-fill);
     stroke: var(--tree-node-current-stroke);
+    stroke-width: 3px;
+    filter: drop-shadow(0 0 4px var(--tree-node-current-stroke));
+}
+
+.node-current-star {
+    font-size: 1rem;
+    fill: var(--tree-node-current-fill);
+    pointer-events: none;
+    filter: drop-shadow(0 0 2px var(--tree-node-current-stroke));
 }
 
 .node-circle.selected {
