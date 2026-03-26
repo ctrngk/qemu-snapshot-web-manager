@@ -263,6 +263,27 @@ static int utm_vm_pause(const char *vm_name)
     return ret;
 }
 
+static int utm_vm_force_stop(const char *vm_name)
+{
+    /* utmctl stop is already a forced stop (no graceful shutdown) */
+    return utm_vm_stop(vm_name);
+}
+
+static int utm_vm_resume(const char *vm_name)
+{
+    const char *path = utmctl_path();
+    if (!path)
+        return -1;
+    /* Resume from suspended state — utmctl doesn't have a direct resume,
+       but "start" on a suspended VM resumes it */
+    const char *args[] = {path, "start", vm_name, NULL};
+    char output[1024];
+    int ret = run_cmd(args, output, sizeof(output));
+    if (ret != 0)
+        log_msg(LOG_ERROR, "utm: resume failed: %s", output);
+    return ret;
+}
+
 /* ─── Snapshot operations — all unsupported via utmctl ─── */
 
 static int utm_list_snapshots(const char *vm_name, snapshot_node_t **tree)
@@ -445,7 +466,9 @@ static vm_backend_t utm_be = {
     .free_vm_list       = utm_free_vm_list,
     .vm_start           = utm_vm_start,
     .vm_stop            = utm_vm_stop,
+    .vm_force_stop      = utm_vm_force_stop,
     .vm_pause           = utm_vm_pause,
+    .vm_resume          = utm_vm_resume,
     .list_snapshots     = utm_list_snapshots,
     .create_snapshot    = utm_create_snapshot,
     .delete_snapshot    = utm_delete_snapshot,

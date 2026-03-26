@@ -6,7 +6,7 @@
 #include <limits.h>
 
 #include <microhttpd.h>
-#include <libvirt/virterror.h>
+#include "libvirt_backend.h"
 
 #include "routes.h"
 #include "util.h"
@@ -234,6 +234,40 @@ static enum MHD_Result handle_vm_pause(struct MHD_Connection *conn,
     return ret;
 }
 
+static enum MHD_Result handle_vm_resume(struct MHD_Connection *conn,
+                                        const char *vm_name)
+{
+    vm_backend_t *be = backend_get();
+    if (!be || !be->vm_resume || be->vm_resume(vm_name) != 0) {
+        char *html = render_error("Failed to resume VM");
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                                                html, "vmStateChanged");
+        free(html);
+        return ret;
+    }
+    char *html = render_success("VM resumed");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
+    free(html);
+    return ret;
+}
+
+static enum MHD_Result handle_vm_force_stop(struct MHD_Connection *conn,
+                                            const char *vm_name)
+{
+    vm_backend_t *be = backend_get();
+    if (!be || !be->vm_force_stop || be->vm_force_stop(vm_name) != 0) {
+        char *html = render_error("Failed to force-stop VM");
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                                                html, "vmStateChanged");
+        free(html);
+        return ret;
+    }
+    char *html = render_success("VM force-stopped");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
+    free(html);
+    return ret;
+}
+
 static enum MHD_Result handle_snapshot_tree(struct MHD_Connection *conn,
                                             const char *vm_name)
 {
@@ -443,8 +477,7 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
     vm_backend_t *be = backend_get();
     if (!be) {
         char *html = render_error("No backend available");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                                                html, "sharedFoldersChanged");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
         free(html);
         return ret;
     }
@@ -459,8 +492,7 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
         !mount_tag  || strlen(mount_tag) == 0) {
         free(source_dir); free(mount_tag); free(fs_type); free(ro_str);
         char *html = render_error("Source directory and mount tag are required");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_BAD_REQUEST,
-                                                html, "sharedFoldersChanged");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_BAD_REQUEST, html);
         free(html);
         return ret;
     }
@@ -473,19 +505,27 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
     free(fs_type);
     free(ro_str);
 
-    if (rc != 0) {
-        virErrorPtr verr = virGetLastError();
-        const char *detail = (verr && verr->message) ? verr->message : NULL;
+    if (rc < 0) {
+        const char *detail = lv_get_last_error();
         char *html;
-        if (detail) {
-            char buf[1024];
+        if (detail && detail[0]) {
+            char buf[1280];
             snprintf(buf, sizeof(buf), "Failed to add shared folder: %s", detail);
             html = render_error(buf);
         } else {
             html = render_error("Failed to add shared folder (check server logs for details)");
         }
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                                                html, "sharedFoldersChanged");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+    if (rc == 1) {
+        /* Folder saved to config but VM needs restart for shared memory */
+        char *html = render_success(
+            "Shared folder saved to VM config. "
+            "\xe2\x9a\xa0\xef\xb8\x8f Restart the VM for it to take effect "
+            "(VirtioFS requires shared memory, which was just enabled).");
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
         free(html);
         return ret;
     }
@@ -502,8 +542,7 @@ static enum MHD_Result handle_remove_shared_folder(struct MHD_Connection *conn,
     vm_backend_t *be = backend_get();
     if (!be || be->remove_shared_folder(vm_name, mount_tag) != 0) {
         char *html = render_error("Failed to remove shared folder");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                                                html, "sharedFoldersChanged");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
         free(html);
         return ret;
     }
@@ -634,8 +673,9 @@ static enum MHD_Result handle_automount_setup(struct MHD_Connection *conn,
     int rc = be->setup_automount(vm_name, &msg);
     if (rc != 0) {
         char *html = render_error(msg ? msg : "Failed to setup auto-mount");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                                                html, "sharedFoldersChanged");
+        /* Don't trigger sharedFoldersChanged on error — that would reload the
+         * panel and wipe out this error message before the user can read it. */
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
         free(html);
         free(msg);
         return ret;
@@ -894,6 +934,18 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
     /* /api/vms/{name}/pause */
     if (str_eq(seg3, "pause") && is_post) {
         result = handle_vm_pause(connection, vm_name);
+        goto cleanup;
+    }
+
+    /* /api/vms/{name}/resume */
+    if (str_eq(seg3, "resume") && is_post) {
+        result = handle_vm_resume(connection, vm_name);
+        goto cleanup;
+    }
+
+    /* /api/vms/{name}/force-stop */
+    if (str_eq(seg3, "force-stop") && is_post) {
+        result = handle_vm_force_stop(connection, vm_name);
         goto cleanup;
     }
 
