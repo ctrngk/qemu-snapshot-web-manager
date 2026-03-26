@@ -12,6 +12,7 @@
 - **Internal & external snapshot management** — create, delete, revert, and merge snapshots
 - **Auto-merge for external snapshots** — block commit support to flatten snapshot chains
 - **Shared folder management** — list (virtiofs + 9p), add, detach, mount/unmount via guest agent, real-time mount status detection, server-side directory browser for selecting source paths
+- **Auto-mount for VirtioFS shares** — one-click setup installs a systemd timer in the guest VM that automatically discovers and mounts VirtioFS shared folders to `/media/<tag>`
 - **Guest agent integration** — mount and unmount shared folders inside VMs through QEMU guest agent
 - **VM lifecycle controls** — start, stop, and pause virtual machines
 - **Real-time status updates** — keeps the UI in sync with VM state
@@ -153,6 +154,7 @@ The interface uses a three-panel layout:
 | `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | Detach shared folder |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | Mount inside guest VM |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | Unmount inside guest VM |
+| `POST` | `/api/vms/{name}/shared-folders/automount` | Install auto-mount timer in guest VM |
 | `GET` | `/api/browse?path=...` | Server-side directory browser (HTML) |
 
 ## Known Limitations

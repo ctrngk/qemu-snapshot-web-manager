@@ -460,6 +460,45 @@ sudo systemctl enable --now qemu-guest-agent
 
 After installing, restart the VM or the agent service, and the Mount/Unmount buttons should work.
 
+### Auto-Mount (VirtioFS only)
+
+Tired of clicking Mount every time you start your VM? The **Auto-Mount** feature
+installs a tiny background service inside the guest that automatically discovers
+and mounts VirtioFS shared folders for you — no clicks needed after setup.
+
+#### What it does
+
+Auto-Mount installs a **systemd timer** in the guest VM that runs every 5 seconds.
+Each time it runs, it looks for any VirtioFS shares that aren't mounted yet and
+mounts them to `/media/<tag>` (where `<tag>` is the folder's mount tag). If a
+folder is already mounted, it skips it — so there's no harm in it running
+continuously.
+
+#### How to set it up
+
+1. Make sure the VM is **running** and the **QEMU Guest Agent** is installed
+   (see [Installing the Guest Agent](#installing-the-qemu-guest-agent)).
+2. In the **Shared Folders** section (right panel), click the
+   **"⚙️ Setup Auto-Mount"** button.
+3. A confirmation dialog will appear — click **OK** to proceed.
+4. That's it! Once installed, the button disappears and is replaced by a green
+   **"✓ Auto-Mount Active"** badge.
+
+This is a **one-time setup per VM**. The service persists across reboots — once
+installed, your VirtioFS shares will be mounted automatically every time the VM
+starts.
+
+#### Good to know
+
+- **VirtioFS only.** Auto-Mount discovers shares via `/sys/fs/virtiofs/`, which
+  is a VirtioFS-specific interface. It does not work with 9p shares. You can
+  still mount 9p shares manually using the Mount button.
+- **Requires the Guest Agent.** The setup button uses the QEMU Guest Agent to
+  write files and run commands inside the VM. If the agent isn't installed, the
+  button won't appear.
+- **Mount path is `/media/<tag>`.** Shares are mounted at `/media/` followed by
+  the mount tag (e.g., a share tagged `projects` appears at `/media/projects`).
+
 ### SELinux Note (Fedora / RHEL)
 
 On Fedora or RHEL systems, SELinux may block the guest agent from executing mount commands. If mount fails with a permission error, run this inside the VM:
@@ -473,6 +512,20 @@ This tells SELinux to allow the guest agent to perform system operations like mo
 > 💡 If `semanage` is not installed, install it with:
 > - **Fedora / RHEL:** `sudo dnf install policycoreutils-python-utils`
 > - **Ubuntu / Debian:** `sudo apt install policycoreutils-python-utils`
+
+### Guest Sudoers Configuration
+
+If you're using the project's guest dotfiles, the sudoers file at
+`/etc/sudoers.d/copilot-automation` grants passwordless access to **specific
+commands only** (not full root access):
+
+- `mount`, `umount` — for mounting/unmounting shared folders
+- `mkdir` — for creating mount-point directories
+- `systemctl` — for enabling the auto-mount timer
+- `findmnt` — for detecting mount status
+
+This follows the principle of least privilege — the guest agent can perform the
+operations it needs without having unrestricted root access.
 
 ---
 
@@ -504,6 +557,10 @@ most reliably) when the VM is powered off.
 ✅ **Install the guest agent for the best experience.** With the QEMU Guest
 Agent, you can mount and unmount shared folders with one click, and the UI
 shows real-time mount status.
+
+✅ **Enable Auto-Mount for hands-free shared folders.** Once you set up
+Auto-Mount, your VirtioFS shared folders are mounted automatically every time
+the VM starts — no manual clicking required.
 
 ✅ **Use virtiofs for better performance.** If your system supports it, virtiofs
 is significantly faster than 9p for shared folders.
@@ -649,6 +706,7 @@ works on a wider range of setups.
 | **Mount tag** | A short label (like a name tag) that identifies a shared folder. The VM uses this tag to find and mount the folder. |
 | **Mount status** | Shows whether a shared folder is currently accessible inside the VM. "✓ Mounted" means the folder is active and accessible. "Not Mounted" means it's configured but not yet connected. |
 | **Detach** | Removes a shared folder configuration from a VM. Does NOT delete any files on the host. |
+| **Auto-Mount** | A background service (systemd timer) inside the guest VM that automatically discovers and mounts VirtioFS shared folders every 5 seconds. Set it up once and forget about it. |
 
 ---
 
