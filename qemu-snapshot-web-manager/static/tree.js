@@ -222,7 +222,5 @@ document.body.addEventListener('vmStateChanged', function() {
     if (window.currentVm) {
         loadSnapshotTree(window.currentVm);
     }
-    // Refresh VM list
-    var vmList = document.getElementById('vm-list');
-    if (vmList) htmx.trigger(vmList, 'revealed');
+    /* VM list refresh is handled by HTMX via hx-trigger="vmStateChanged from:body" */
 });

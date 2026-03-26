@@ -371,14 +371,14 @@ header {
 /* ===== VM List Items ===== */
 .vm-item {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
+    flex-direction: column;
+    padding: 10px 16px;
     cursor: pointer;
     border-bottom: 1px solid var(--border-subtle);
     border-left: 3px solid transparent;
     transition: background-color 0.15s ease, border-color 0.15s ease;
     user-select: none;
+    gap: 4px;
 }
 
 .vm-item:hover {
@@ -388,6 +388,13 @@ header {
 .vm-item.active {
     background: var(--bg-active);
     border-left-color: var(--accent);
+}
+
+.vm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
 }
 
 .vm-name {
@@ -402,16 +409,28 @@ header {
 
 .vm-meta {
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 2px;
-    flex-shrink: 0;
-    margin-left: 8px;
+    align-items: center;
+    gap: 8px;
 }
 
 .vm-info {
     font-size: 0.7rem;
     color: var(--text-tertiary);
+}
+
+.vm-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+#vm-notification {
+    padding: 0 8px;
+}
+
+#vm-notification:empty {
+    display: none;
 }
 
 /* ===== VM State Badges ===== */
@@ -485,6 +504,23 @@ header {
     padding: 4px 10px;
     font-size: 0.75rem;
     border-radius: var(--radius-sm);
+}
+
+.btn-xs {
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    border-radius: var(--radius-sm);
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--text-secondary);
 }
 
 .btn-primary {

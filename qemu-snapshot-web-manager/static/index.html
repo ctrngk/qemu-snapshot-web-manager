@@ -56,10 +56,11 @@
             </div>
             <div id="vm-list"
                  hx-get="/api/vms"
-                 hx-trigger="load"
+                 hx-trigger="load, vmStateChanged from:body, every 10s"
                  hx-swap="innerHTML">
                 <p class="placeholder">Loading VMs… <span class="spinner"></span></p>
             </div>
+            <div id="vm-notification"></div>
         </aside>
 
         <!-- Center Panel: Snapshot Tree -->
@@ -106,6 +107,7 @@
                         + Add Folder
                     </button>
                 </div>
+                <div id="folder-notification-persistent"></div>
                 <div id="shared-folders-content" class="detail-section">
                     <p class="placeholder">Select a VM</p>
                 </div>
@@ -184,7 +186,11 @@
 
         /* ── HTMX Event Handlers ──────────────────────────────── */
         document.body.addEventListener('htmx:afterSwap', function(evt) {
-            // Handle HX-Trigger response headers for toast notifications
+            /* Re-apply active class to selected VM after VM list refreshes */
+            if (evt.detail.target && evt.detail.target.id === 'vm-list' && window.currentVm) {
+                var sel = document.querySelector('.vm-item[data-vm="' + window.currentVm + '"]');
+                if (sel) sel.classList.add('active');
+            }
         });
 
         document.body.addEventListener('htmx:beforeSwap', function(evt) {

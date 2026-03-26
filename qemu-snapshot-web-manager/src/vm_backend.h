@@ -43,8 +43,10 @@ typedef struct vm_backend {
 
     /* VM lifecycle */
     int  (*vm_start)(const char *vm_name);
-    int  (*vm_stop)(const char *vm_name);
+    int  (*vm_stop)(const char *vm_name);       /* graceful shutdown */
+    int  (*vm_force_stop)(const char *vm_name); /* immediate power off */
     int  (*vm_pause)(const char *vm_name);
+    int  (*vm_resume)(const char *vm_name);
 
     /* Snapshot operations */
     int  (*list_snapshots)(const char *vm_name, snapshot_node_t **tree);

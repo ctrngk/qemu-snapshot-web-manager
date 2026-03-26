@@ -161,7 +161,7 @@ char *render_vm_list(vm_info_t **vms, int count)
         return str_dup("<p class=\"placeholder\">No virtual machines found</p>");
 
     strbuf_t sb;
-    sb_init(&sb, (size_t)count * 512);
+    sb_init(&sb, (size_t)count * 1024);
 
     for (int i = 0; i < count; i++) {
         vm_info_t *vm = vms[i];
@@ -174,15 +174,84 @@ char *render_vm_list(vm_info_t **vms, int count)
 
         sb_appendf(&sb,
             "<div class=\"vm-item\" data-vm=\"%s\" onclick=\"selectVm('%s')\">\n"
-            "    <div class=\"vm-name\">%s</div>\n"
-            "    <div class=\"vm-meta\">\n"
+            "    <div class=\"vm-header\">\n"
+            "        <div class=\"vm-name\">%s</div>\n"
             "        <span class=\"vm-state %s\">%s</span>\n"
+            "    </div>\n"
+            "    <div class=\"vm-meta\">\n"
             "        <span class=\"vm-info\">%d vCPU · %lu MB</span>\n"
             "    </div>\n"
-            "</div>\n",
+            "    <div class=\"vm-actions\" onclick=\"event.stopPropagation()\">\n",
             esc_name, esc_name, esc_name,
             state_cls, state_str,
             vm->vcpus, mem_mb);
+
+        /* Context-aware action buttons */
+        switch (vm->state) {
+        case VM_RUNNING:
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-xs btn-warning\""
+                " hx-post=\"/api/vms/%s/stop\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " title=\"Shutdown (graceful)\">⏹ Stop</button>\n"
+                "        <button class=\"btn btn-xs btn-secondary\""
+                " hx-post=\"/api/vms/%s/pause\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " title=\"Pause\">⏸ Pause</button>\n"
+                "        <button class=\"btn btn-xs btn-danger\""
+                " hx-post=\"/api/vms/%s/force-stop\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " hx-confirm=\"Force stop %s? This may cause data loss.\""
+                " title=\"Force power off\">⚡ Force</button>\n",
+                esc_name, esc_name, esc_name, esc_name);
+            break;
+        case VM_PAUSED:
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-xs btn-success\""
+                " hx-post=\"/api/vms/%s/resume\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " title=\"Resume\">▶ Resume</button>\n"
+                "        <button class=\"btn btn-xs btn-danger\""
+                " hx-post=\"/api/vms/%s/force-stop\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " hx-confirm=\"Force stop %s? This may cause data loss.\""
+                " title=\"Force power off\">⚡ Force</button>\n",
+                esc_name, esc_name, esc_name);
+            break;
+        case VM_SHUTOFF:
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-xs btn-success\""
+                " hx-post=\"/api/vms/%s/start\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " title=\"Start VM\">▶ Start</button>\n",
+                esc_name);
+            break;
+        default:
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-xs btn-success\""
+                " hx-post=\"/api/vms/%s/start\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " title=\"Start VM\">▶ Start</button>\n"
+                "        <button class=\"btn btn-xs btn-danger\""
+                " hx-post=\"/api/vms/%s/force-stop\""
+                " hx-target=\"#vm-notification\""
+                " hx-swap=\"innerHTML\""
+                " hx-confirm=\"Force stop %s?\""
+                " title=\"Force power off\">⚡ Force</button>\n",
+                esc_name, esc_name, esc_name);
+            break;
+        }
+
+        sb_appendf(&sb,
+            "    </div>\n"
+            "</div>\n");
 
         free(esc_name);
     }
@@ -350,12 +419,15 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         sb_appendf(&sb,
             "    <button class=\"btn btn-sm btn-primary\"\n"
             "            hx-post=\"/api/vms/%s/shared-folders/automount\"\n"
-            "            hx-target=\"#folder-notification\"\n"
+            "            hx-target=\"#folder-notification-persistent\"\n"
             "            hx-swap=\"innerHTML\"\n"
+            "            hx-indicator=\"#automount-spinner\"\n"
+            "            hx-disabled-elt=\"this\"\n"
             "            hx-confirm=\"Install auto-mount service in the guest VM?"
             " This adds a systemd timer that mounts VirtioFS shares to /media/ automatically.\">\n"
             "        \xe2\x9a\x99\xef\xb8\x8f Setup Auto-Mount\n"
-            "    </button>\n", esc_vm);
+            "    </button>\n"
+            "    <span id=\"automount-spinner\" class=\"spinner htmx-indicator\"></span>\n", esc_vm);
     }
     /* If automount_active == -1 (unknown/error), show nothing */
     sb_append(&sb, "</div>\n");
@@ -413,7 +485,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             sb_appendf(&sb,
                 "            <button class=\"btn btn-sm btn-success\"\n"
                 "                    hx-post=\"/api/vms/%s/shared-folders/%s/mount\"\n"
-                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-target=\"#folder-notification-persistent\"\n"
                 "                    hx-swap=\"innerHTML\"\n"
                 "                    hx-confirm=\"Mount %s inside the guest VM?\"\n"
                 "                    title=\"Mount inside guest via QEMU Guest Agent\">\n"
@@ -427,7 +499,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             sb_appendf(&sb,
                 "            <button class=\"btn btn-sm btn-warning\"\n"
                 "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
-                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-target=\"#folder-notification-persistent\"\n"
                 "                    hx-swap=\"innerHTML\"\n"
                 "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
                 "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
@@ -445,7 +517,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             sb_appendf(&sb,
                 "            <button class=\"btn btn-sm btn-warning\"\n"
                 "                    hx-post=\"/api/vms/%s/shared-folders/%s/unmount\"\n"
-                "                    hx-target=\"#folder-notification\"\n"
+                "                    hx-target=\"#folder-notification-persistent\"\n"
                 "                    hx-swap=\"innerHTML\"\n"
                 "                    hx-confirm=\"Unmount %s from the guest VM?\"\n"
                 "                    title=\"Unmount inside guest via QEMU Guest Agent\">\n"
@@ -456,7 +528,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         sb_appendf(&sb,
             "        <button class=\"btn btn-sm btn-danger\"\n"
             "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
-            "                hx-target=\"#shared-folders-content\"\n"
+            "                hx-target=\"#folder-notification-persistent\"\n"
             "                hx-swap=\"innerHTML\"\n"
             "                hx-confirm=\"Detach shared folder '%s'? (Files on host are not deleted)\">\n"
             "            \xe2\x9c\x96 Detach\n"
@@ -490,7 +562,7 @@ char *render_add_shared_folder_form(const char *vm_name)
     sb_append(&sb, "        <h3>Add Shared Folder</h3>\n");
     sb_appendf(&sb,
         "        <form hx-post=\"/api/vms/%s/shared-folders\"\n"
-        "              hx-target=\"#shared-folders-content\"\n"
+        "              hx-target=\"#folder-notification-persistent\"\n"
         "              hx-swap=\"innerHTML\"\n"
         "              hx-on::after-request=\"this.closest('.modal-overlay').remove()\">\n",
         esc_vm);

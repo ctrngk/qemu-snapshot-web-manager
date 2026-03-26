@@ -19,6 +19,11 @@
 static virConnectPtr conn = NULL;
 static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Thread-local buffer for passing libvirt error details to route handlers */
+static _Thread_local char lv_last_error[1024] = "";
+
+const char *lv_get_last_error(void) { return lv_last_error; }
+
 /* ------------------------------------------------------------------ */
 /*  XML parsing helpers (no libxml2 dependency)                       */
 /* ------------------------------------------------------------------ */
@@ -256,12 +261,32 @@ static int lv_vm_stop(const char *vm_name)
     return ret;
 }
 
+static int lv_vm_force_stop(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+    int ret = virDomainDestroy(dom);
+    virDomainFree(dom);
+    return ret;
+}
+
 static int lv_vm_pause(const char *vm_name)
 {
     virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
     conn_unlock();
     int ret = virDomainSuspend(dom);
+    virDomainFree(dom);
+    return ret;
+}
+
+static int lv_vm_resume(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+    int ret = virDomainResume(dom);
     virDomainFree(dom);
     return ret;
 }
@@ -685,10 +710,29 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
     virDomainGetState(dom, &state, &reason, 0);
 
     unsigned int flags;
+    int needs_restart = 0;
     if (state == VIR_DOMAIN_RUNNING || state == VIR_DOMAIN_PAUSED) {
-        flags = VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_AFFECT_CONFIG;
-        log_msg(LOG_WARN, "libvirt: hot-adding shared folder '%s' to running VM '%s'",
-                mount_tag, vm_name);
+        /* Check if shared memory is in the live config (required for virtiofs hot-add) */
+        if (!str_eq(fs_type, "9p")) {
+            char *livexml = virDomainGetXMLDesc(dom, 0);
+            if (livexml && !strstr(livexml, "<access mode='shared'")) {
+                /* Shared memory was just added to persistent config but the running
+                 * VM doesn't have it yet — can only do config-only */
+                flags = VIR_DOMAIN_AFFECT_CONFIG;
+                needs_restart = 1;
+                log_msg(LOG_INFO, "libvirt: VM '%s' needs restart for shared memory — "
+                        "adding folder to config only", vm_name);
+            } else {
+                flags = VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_AFFECT_CONFIG;
+                log_msg(LOG_WARN, "libvirt: hot-adding shared folder '%s' to running VM '%s'",
+                        mount_tag, vm_name);
+            }
+            free(livexml);
+        } else {
+            flags = VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_AFFECT_CONFIG;
+            log_msg(LOG_WARN, "libvirt: hot-adding shared folder '%s' to running VM '%s'",
+                    mount_tag, vm_name);
+        }
     } else {
         flags = VIR_DOMAIN_AFFECT_CONFIG;
     }
@@ -696,9 +740,18 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
     int ret = virDomainAttachDeviceFlags(dom, xml, flags);
     if (ret != 0) {
         virErrorPtr verr = virGetLastError();
+        const char *detail = (verr && verr->message) ? verr->message : "unknown error";
+        snprintf(lv_last_error, sizeof(lv_last_error), "%s", detail);
         log_msg(LOG_ERROR, "libvirt: failed to add shared folder '%s' to '%s': %s",
-                mount_tag, vm_name, verr && verr->message ? verr->message : "unknown error");
+                mount_tag, vm_name, detail);
     } else {
+        lv_last_error[0] = '\0';
+        if (needs_restart) {
+            log_msg(LOG_INFO, "libvirt: folder '%s' saved to config — VM restart required",
+                    mount_tag);
+            virDomainFree(dom);
+            return 1;
+        }
         log_msg(LOG_INFO, "libvirt: added shared folder '%s' (%s) to '%s'",
                 mount_tag, fs_type, vm_name);
     }
@@ -1262,7 +1315,9 @@ static vm_backend_t libvirt_be = {
     .free_vm_list        = lv_free_vm_list,
     .vm_start            = lv_vm_start,
     .vm_stop             = lv_vm_stop,
+    .vm_force_stop       = lv_vm_force_stop,
     .vm_pause            = lv_vm_pause,
+    .vm_resume           = lv_vm_resume,
     .list_snapshots      = lv_list_snapshots,
     .create_snapshot     = lv_create_snapshot,
     .delete_snapshot     = lv_delete_snapshot,
