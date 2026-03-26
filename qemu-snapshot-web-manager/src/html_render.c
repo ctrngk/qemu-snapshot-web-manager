@@ -346,34 +346,36 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         char *esc_path = html_escape(folders[i].source_dir);
 
         sb_append(&sb, "    <div class=\"folder-item\">\n");
-        sb_appendf(&sb, "        <div class=\"folder-icon\">\xf0\x9f\x93\x81</div>\n");
-        sb_append(&sb, "        <div class=\"folder-info\">\n");
-        sb_appendf(&sb, "            <div class=\"folder-tag\">%s</div>\n", esc_tag);
-        sb_appendf(&sb, "            <div class=\"folder-path\">%s</div>\n", esc_path);
+        sb_append(&sb, "        <div class=\"folder-header\">\n");
+        sb_appendf(&sb, "            <div class=\"folder-icon\">\xf0\x9f\x93\x81</div>\n");
+        sb_append(&sb, "            <div class=\"folder-info\">\n");
+        sb_appendf(&sb, "                <div class=\"folder-tag\">%s</div>\n", esc_tag);
+        sb_appendf(&sb, "                <div class=\"folder-path\" title=\"%s\">%s</div>\n", esc_path, esc_path);
         if (folders[i].read_only) {
-            sb_append(&sb, "            <span class=\"badge badge-readonly\">Read Only</span>\n");
+            sb_append(&sb, "                <span class=\"badge badge-readonly\">Read Only</span>\n");
         }
         if (folders[i].mounted == 1) {
-            sb_append(&sb, "            <span class=\"badge badge-mounted\">✓ Mounted</span>\n");
+            sb_append(&sb, "                <span class=\"badge badge-mounted\">✓ Mounted</span>\n");
         } else if (folders[i].mounted == 0) {
-            sb_append(&sb, "            <span class=\"badge badge-unmounted\">Not Mounted</span>\n");
+            sb_append(&sb, "                <span class=\"badge badge-unmounted\">Not Mounted</span>\n");
         }
 
         /* Mount instructions */
         const char *ftype = folders[i].fs_type ? folders[i].fs_type : "virtiofs";
         if (strcmp(ftype, "9p") == 0) {
             sb_appendf(&sb,
-                "            <div class=\"folder-mount-hint\">"
+                "                <div class=\"folder-mount-hint\">"
                 "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t 9p -o trans=virtio %s /mnt/%s</code></div>\n",
                 esc_tag, esc_tag, esc_tag);
         } else {
             sb_appendf(&sb,
-                "            <div class=\"folder-mount-hint\">"
+                "                <div class=\"folder-mount-hint\">"
                 "<code>sudo mkdir -p /mnt/%s &amp;&amp; sudo mount -t virtiofs %s /mnt/%s</code></div>\n",
                 esc_tag, esc_tag, esc_tag);
         }
 
-        sb_append(&sb, "        </div>\n");
+        sb_append(&sb, "            </div>\n");  /* close folder-info */
+        sb_append(&sb, "        </div>\n");  /* close folder-header */
 
         int mounted = folders[i].mounted; /* 1=mounted, 0=not mounted, -1=unknown (VM off) */
 

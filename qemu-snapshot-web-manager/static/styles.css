@@ -689,8 +689,8 @@ button:disabled, .btn:disabled {
 
 .folder-item {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    flex-direction: column;
+    gap: 8px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-subtle);
     transition: background 0.15s ease;
@@ -708,6 +708,12 @@ button:disabled, .btn:disabled {
     font-size: 1.25rem;
     flex-shrink: 0;
     padding-top: 2px;
+}
+
+.folder-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
 }
 
 .folder-info {
@@ -728,7 +734,9 @@ button:disabled, .btn:disabled {
     font-size: 0.75rem;
     color: var(--text-secondary);
     font-family: var(--font-mono);
-    word-break: break-all;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .folder-mount-hint {
@@ -750,8 +758,7 @@ button:disabled, .btn:disabled {
 .folder-actions {
     display: flex;
     gap: 4px;
-    align-items: flex-start;
-    flex-shrink: 0;
+    align-items: center;
     flex-wrap: wrap;
 }
 
