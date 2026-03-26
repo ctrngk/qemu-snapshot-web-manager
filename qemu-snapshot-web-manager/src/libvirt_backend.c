@@ -928,6 +928,82 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
     return ret;
 }
 
+static int lv_check_mount_status(const char *vm_name,
+                                  shared_folder_t *folders, int count)
+{
+    if (!conn || !folders || count <= 0) return -1;
+
+    virDomainPtr dom = virDomainLookupByName(conn, vm_name);
+    if (!dom) return -1;
+
+    /* Default all to unknown (-1) */
+    for (int i = 0; i < count; i++)
+        folders[i].mounted = -1;
+
+    /* VM must be running to query guest agent */
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
+        virDomainFree(dom);
+        return 0; /* not an error — just can't check */
+    }
+
+    /* Query guest-get-fsinfo via guest agent */
+    char *result = virDomainQemuAgentCommand(dom,
+        "{\"execute\":\"guest-get-fsinfo\"}", 10, 0);
+    virDomainFree(dom);
+
+    if (!result) {
+        /* Guest agent not available — leave as unknown */
+        return 0;
+    }
+
+    json_error_t jerr;
+    json_t *resp = json_loads(result, 0, &jerr);
+    free(result);
+    if (!resp) return 0;
+
+    json_t *fs_list = json_object_get(resp, "return");
+    if (!json_is_array(fs_list)) {
+        json_decref(resp);
+        return 0;
+    }
+
+    /* Mark all as not mounted first, then check */
+    for (int i = 0; i < count; i++)
+        folders[i].mounted = 0;
+
+    /* For each mounted filesystem in the guest, match against our tags */
+    size_t idx;
+    json_t *fs_entry;
+    json_array_foreach(fs_list, idx, fs_entry) {
+        const char *mountpoint = json_string_value(json_object_get(fs_entry, "mountpoint"));
+        const char *fstype = json_string_value(json_object_get(fs_entry, "type"));
+        if (!mountpoint) continue;
+
+        /* Match by mount tag: virtiofs/9p mounts show up at /mnt/<tag> */
+        for (int i = 0; i < count; i++) {
+            if (!folders[i].mount_tag) continue;
+            char expected[512];
+            snprintf(expected, sizeof(expected), "/mnt/%s", folders[i].mount_tag);
+            if (strcmp(mountpoint, expected) == 0) {
+                folders[i].mounted = 1;
+                break;
+            }
+
+            /* Also check by device name — some systems show the tag as the device */
+            const char *name = json_string_value(json_object_get(fs_entry, "name"));
+            if (name && strcmp(name, folders[i].mount_tag) == 0) {
+                folders[i].mounted = 1;
+                break;
+            }
+        }
+        (void)fstype; /* may be useful later */
+    }
+
+    json_decref(resp);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /*  vtable                                                            */
 /* ------------------------------------------------------------------ */
@@ -952,6 +1028,7 @@ static vm_backend_t libvirt_be = {
     .remove_shared_folder  = lv_remove_shared_folder,
     .mount_shared_folder   = lv_mount_shared_folder,
     .unmount_shared_folder = lv_unmount_shared_folder,
+    .check_mount_status    = lv_check_mount_status,
 };
 
 vm_backend_t *libvirt_backend_get(void)

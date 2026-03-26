@@ -457,6 +457,7 @@ static vm_backend_t utm_be = {
     .remove_shared_folder  = utm_remove_shared_folder,
     .mount_shared_folder   = NULL,
     .unmount_shared_folder = NULL,
+    .check_mount_status    = NULL,
 };
 
 vm_backend_t *utm_backend_get(void)

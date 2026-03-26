@@ -364,6 +364,27 @@ header {
     color: #86198f;
 }
 
+.badge-readonly {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.badge-mounted {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.badge-unmounted {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+button:disabled, .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 /* ===== Toast Notifications ===== */
 #toast-container {
     position: fixed;
