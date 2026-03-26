@@ -204,6 +204,10 @@
             var selected = document.querySelector('.vm-item[data-vm="' + vmName + '"]');
             if (selected) selected.classList.add('active');
 
+            // Switch to Snapshot tab so the tree is visible
+            var snapTab = document.querySelector('.tab[data-tab="snapshot-detail"]');
+            if (snapTab) switchTab(snapTab);
+
             // Update the create snapshot button
             var toolbar = document.getElementById('tree-toolbar');
             toolbar.style.display = 'flex';
