@@ -16,5 +16,6 @@ int   str_starts_with(const char *str, const char *prefix);
 int   str_eq(const char *a, const char *b);
 char *url_decode(const char *src);             /* returns malloc'd decoded string */
 char *path_segment(const char *url, int index); /* extract segment: "/api/vms/foo" idx=2 → "foo" */
+char *base64_decode(const char *src, size_t *out_len); /* returns malloc'd decoded bytes */
 
 #endif
