@@ -7,23 +7,41 @@
     <link rel="stylesheet" href="/styles.css">
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script>
+        // Theme: check localStorage then prefers-color-scheme (run before paint)
+        (function() {
+            var saved = localStorage.getItem('theme');
+            if (saved) {
+                document.documentElement.setAttribute('data-theme', saved);
+            } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
 </head>
 <body>
     <header>
         <div class="header-content">
             <h1>🖥️ QEMU Snapshot Manager</h1>
-            <div class="header-status">
+            <div class="header-right">
                 <span id="backend-status"
                       hx-get="/api/ping"
                       hx-trigger="load"
                       hx-swap="innerHTML">
-                    connecting...
+                    connecting…
                 </span>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀️</button>
             </div>
         </div>
     </header>
 
-    <main class="layout">
+    <!-- Sidebar toggle button (visible on all screen sizes) -->
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle VM sidebar">☰</button>
+
+    <!-- Overlay for sidebar on medium/small screens -->
+    <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <main class="layout" id="main-layout">
         <!-- Left Panel: VM List -->
         <aside class="panel vm-panel">
             <div class="panel-header">
@@ -40,7 +58,7 @@
                  hx-get="/api/vms"
                  hx-trigger="load"
                  hx-swap="innerHTML">
-                <p class="placeholder">Loading VMs...</p>
+                <p class="placeholder">Loading VMs… <span class="spinner"></span></p>
             </div>
         </aside>
 
@@ -62,58 +80,100 @@
             </div>
         </section>
 
-        <!-- Right Panel: Details & Actions -->
+        <!-- Right Panel: Tabbed Details -->
         <aside class="panel detail-panel">
-            <div class="panel-header">
-                <h2>Details</h2>
+            <div class="tab-bar">
+                <button class="tab active" data-tab="snapshot-detail" onclick="switchTab(this)">Snapshot</button>
+                <button class="tab" data-tab="shared-folders" onclick="switchTab(this)">Shared Folders</button>
             </div>
 
-            <div id="snapshot-detail" class="detail-section">
-                <p class="placeholder">Select a snapshot for details</p>
+            <!-- Tab 1: Snapshot Details -->
+            <div id="snapshot-detail" class="tab-content active">
+                <div class="detail-section">
+                    <p class="placeholder">Select a snapshot for details</p>
+                </div>
             </div>
 
-            <div class="panel-header" style="margin-top: 1em;">
-                <h2>Shared Folders</h2>
-                <button id="btn-add-folder" class="btn btn-sm btn-primary"
-                        hx-get=""
-                        hx-target="#modal-container"
-                        hx-swap="innerHTML"
-                        style="display:none;">
-                    + Add Folder
-                </button>
-            </div>
-            <div id="shared-folders" class="detail-section">
-                <p class="placeholder">Select a VM</p>
+            <!-- Tab 2: Shared Folders -->
+            <div id="shared-folders" class="tab-content">
+                <div class="panel-header">
+                    <h2>Folders</h2>
+                    <button id="btn-add-folder" class="btn btn-sm btn-primary"
+                            hx-get=""
+                            hx-target="#modal-container"
+                            hx-swap="innerHTML"
+                            style="display:none;">
+                        + Add Folder
+                    </button>
+                </div>
+                <div id="shared-folders-content" class="detail-section">
+                    <p class="placeholder">Select a VM</p>
+                </div>
             </div>
         </aside>
     </main>
 
-    <!-- Modal container for create snapshot form, confirmations, etc. -->
+    <!-- Modal container -->
     <div id="modal-container"></div>
 
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <!-- D3.js tree visualization script (Task 11 will create this) -->
+    <!-- D3.js tree visualization -->
     <script src="/tree.js"></script>
 
-    <!-- Global HTMX event handlers -->
+    <!-- Global event handlers & UI logic -->
     <script>
-        // Show toast on successful actions
-        document.body.addEventListener('htmx:afterSwap', function(evt) {
-            // Handle HX-Trigger response headers for toast notifications
-        });
+        /* ── Theme Toggle ─────────────────────────────────────── */
+        function toggleTheme() {
+            var current = document.documentElement.getAttribute('data-theme');
+            var next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            updateThemeIcon();
+        }
 
-        // Handle errors — swap error content into target (HTMX skips non-2xx by default)
-        document.body.addEventListener('htmx:beforeSwap', function(evt) {
-            var status = evt.detail.xhr.status;
-            if (status >= 400 && status < 600) {
-                // Allow the swap so the error HTML fragment is displayed
-                evt.detail.shouldSwap = true;
-                evt.detail.isError = false;
+        function updateThemeIcon() {
+            var btn = document.querySelector('.theme-toggle');
+            if (!btn) return;
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            btn.textContent = isDark ? '☀️' : '🌙';
+        }
+        updateThemeIcon();
+
+        /* ── Sidebar Toggle ───────────────────────────────────── */
+        function toggleSidebar() {
+            var layout = document.getElementById('main-layout');
+            var overlay = document.getElementById('sidebar-overlay');
+            layout.classList.toggle('sidebar-collapsed');
+            var isCollapsed = layout.classList.contains('sidebar-collapsed');
+            var isMedium = window.innerWidth < 1200;
+            if (isMedium) {
+                overlay.classList.toggle('visible', !isCollapsed);
             }
-        });
+        }
 
+        // Auto-collapse sidebar on medium/small screens
+        (function() {
+            if (window.innerWidth < 1200) {
+                document.getElementById('main-layout').classList.add('sidebar-collapsed');
+            }
+        })();
+
+        /* ── Tab Switching ────────────────────────────────────── */
+        function switchTab(tabBtn) {
+            document.querySelectorAll('.tab-bar .tab').forEach(function(t) {
+                t.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-content').forEach(function(c) {
+                c.classList.remove('active');
+            });
+            tabBtn.classList.add('active');
+            var target = document.getElementById(tabBtn.getAttribute('data-tab'));
+            if (target) target.classList.add('active');
+        }
+
+        /* ── Toast ────────────────────────────────────────────── */
         function showToast(message, type) {
             var toast = document.createElement('div');
             toast.className = 'toast toast-' + (type || 'info');
@@ -122,13 +182,25 @@
             setTimeout(function() { toast.remove(); }, 4000);
         }
 
-        // Select a VM — load its snapshots and shared folders
+        /* ── HTMX Event Handlers ──────────────────────────────── */
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            // Handle HX-Trigger response headers for toast notifications
+        });
+
+        document.body.addEventListener('htmx:beforeSwap', function(evt) {
+            var status = evt.detail.xhr.status;
+            if (status >= 400 && status < 600) {
+                evt.detail.shouldSwap = true;
+                evt.detail.isError = false;
+            }
+        });
+
+        /* ── VM Selection ─────────────────────────────────────── */
         function selectVm(vmName) {
             // Remove active class from all VM items
             document.querySelectorAll('.vm-item').forEach(function(el) {
                 el.classList.remove('active');
             });
-            // Add active class to selected
             var selected = document.querySelector('.vm-item[data-vm="' + vmName + '"]');
             if (selected) selected.classList.add('active');
 
@@ -143,14 +215,13 @@
             if (typeof loadSnapshotTree === 'function') {
                 loadSnapshotTree(vmName);
             } else {
-                // Fallback if tree.js not loaded yet
                 document.getElementById('snapshot-tree').innerHTML =
-                    '<p class="placeholder">Tree visualization loading...</p>';
+                    '<p class="placeholder">Tree visualization loading…</p>';
             }
 
             // Load shared folders via HTMX
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
-                target: '#shared-folders', swap: 'innerHTML'
+                target: '#shared-folders-content', swap: 'innerHTML'
             });
 
             // Show and update the add-folder button
@@ -161,44 +232,47 @@
 
             // Store current VM
             window.currentVm = vmName;
+
+            // On medium/small screens, close sidebar after selection
+            if (window.innerWidth < 1200) {
+                var layout = document.getElementById('main-layout');
+                layout.classList.add('sidebar-collapsed');
+                document.getElementById('sidebar-overlay').classList.remove('visible');
+            }
         }
 
         // Refresh shared folders list when folders are added/removed
         document.body.addEventListener('sharedFoldersChanged', function() {
             if (window.currentVm) {
                 htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
-                    target: '#shared-folders', swap: 'innerHTML'
+                    target: '#shared-folders-content', swap: 'innerHTML'
                 });
             }
         });
 
+        /* ── Directory Browser ────────────────────────────────── */
         function openDirBrowser() {
-            // Remove any existing browser
             var existing = document.getElementById('dir-browser-modal');
             if (existing) existing.remove();
 
-            // Create modal
             var modal = document.createElement('div');
             modal.id = 'dir-browser-modal';
             modal.className = 'modal-overlay';
             modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
             modal.innerHTML = '<div class="modal" onclick="event.stopPropagation()">' +
                 '<h3>Select Directory</h3>' +
-                '<div id="dir-browser-content">Loading...</div>' +
+                '<div id="dir-browser-content"><p class="placeholder">Loading… <span class="spinner"></span></p></div>' +
                 '</div>';
             document.body.appendChild(modal);
 
-            // Load initial directory
             htmx.ajax('GET', '/api/browse', {target: '#dir-browser-content', swap: 'innerHTML'});
         }
 
         function selectDirectory(path) {
             document.getElementById('sf-source-dir').value = path;
-            // Trigger the auto-tag generation
             var p = path.replace(/\/$/, '');
             var n = p.split('/').pop() || 'share';
             document.getElementById('sf-mount-tag').value = 'sf_' + n.replace(/[^a-zA-Z0-9_-]/g, '_');
-            // Close the modal
             var modal = document.getElementById('dir-browser-modal');
             if (modal) modal.remove();
         }
