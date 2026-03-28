@@ -1029,23 +1029,31 @@ textarea.form-input {
 
 /* "Current State" virtual node */
 .node-circle.current-state {
-    fill: var(--bg-tertiary);
-    stroke: var(--text-secondary);
+    fill: none;
+    stroke: var(--color-warning, #f59e0b);
     stroke-width: 2px;
-    stroke-dasharray: 3,2;
     cursor: default;
 }
 .node-circle.current-state:hover {
-    fill: var(--bg-tertiary);
+    fill: none;
+}
+.current-state-dot {
+    pointer-events: none;
 }
 .current-state-label {
     font-size: 0.7rem;
     font-style: italic;
-    fill: var(--text-secondary);
+    fill: var(--color-warning, #f59e0b);
 }
 .current-state-info {
     font-size: 0.65rem;
-    fill: var(--color-warning, #e6a817);
+    fill: var(--color-warning, #f59e0b);
+    pointer-events: none;
+}
+.unsaved-label-text {
+    pointer-events: none;
+}
+.unsaved-label-bg {
     pointer-events: none;
 }
 
