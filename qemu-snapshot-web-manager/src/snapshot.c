@@ -98,6 +98,9 @@ static json_t *node_to_json(snapshot_node_t *node)
     json_object_set_new(obj, "type", json_string(type_str));
     json_object_set_new(obj, "isCurrent",
                         json_boolean(node->is_current));
+    if (node->type == SNAP_CURRENT_STATE)
+        json_object_set_new(obj, "isDirty",
+                            json_boolean(node->is_dirty));
 
     json_t *children = json_array();
     for (int i = 0; i < node->child_count; i++)
@@ -179,6 +182,8 @@ void snapshot_tree_add_current_state(snapshot_node_t *root,
         SNAP_CURRENT_STATE,
         0);
 
-    if (state_node)
+    if (state_node) {
+        state_node->is_dirty = is_dirty;
         snapshot_node_add_child(current, state_node);
+    }
 }

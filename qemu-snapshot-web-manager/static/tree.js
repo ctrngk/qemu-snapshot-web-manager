@@ -141,7 +141,7 @@ function renderTree(data) {
             .y(function(d) { return d.y; })
         );
 
-    // Current-state links (dashed arrow)
+    // Current-state links (dashed arrow when dirty, solid subtle when clean)
     var csLinks = g.selectAll('.tree-link-unsaved')
         .data(root.links().filter(function(l) {
             return l.target.data.type === 'current-state';
@@ -149,18 +149,32 @@ function renderTree(data) {
         .enter();
 
     csLinks.append('line')
-        .attr('class', 'tree-link-unsaved')
+        .attr('class', function(d) {
+            return d.target.data.isDirty ? 'tree-link-unsaved' : 'tree-link-clean';
+        })
         .attr('x1', function(d) { return d.source.x; })
         .attr('y1', function(d) { return d.source.y + nodeRadius; })
         .attr('x2', function(d) { return d.target.x; })
         .attr('y2', function(d) { return d.target.y - nodeRadius * 0.7 - 2; })
-        .attr('stroke', 'var(--color-warning, #f59e0b)')
+        .attr('stroke', function(d) {
+            return d.target.data.isDirty
+                ? 'var(--color-warning, #f59e0b)'
+                : 'var(--color-success, #22c55e)';
+        })
         .attr('stroke-width', 2)
-        .attr('stroke-dasharray', '6,4')
-        .attr('marker-end', 'url(#arrow-unsaved)');
+        .attr('stroke-dasharray', function(d) {
+            return d.target.data.isDirty ? '6,4' : null;
+        })
+        .attr('marker-end', function(d) {
+            return d.target.data.isDirty ? 'url(#arrow-unsaved)' : null;
+        });
 
-    // "unsaved changes" label on the dashed connector
-    csLinks.append('rect')
+    // "unsaved changes" label — only shown when dirty
+    var dirtyLinks = csLinks.filter(function(d) {
+        return d.target.data.isDirty;
+    });
+
+    dirtyLinks.append('rect')
         .attr('class', 'unsaved-label-bg')
         .attr('x', function(d) { return (d.source.x + d.target.x) / 2 - 44; })
         .attr('y', function(d) { return (d.source.y + d.target.y) / 2 - 8; })
@@ -170,7 +184,7 @@ function renderTree(data) {
         .attr('fill', 'var(--bg-primary, #0f172a)')
         .attr('opacity', 0.9);
 
-    csLinks.append('text')
+    dirtyLinks.append('text')
         .attr('class', 'unsaved-label-text')
         .attr('x', function(d) { return (d.source.x + d.target.x) / 2; })
         .attr('y', function(d) { return (d.source.y + d.target.y) / 2 + 4; })
@@ -198,7 +212,9 @@ function renderTree(data) {
         .attr('class', function(d) {
             var cls = 'node-circle';
             if (d.data.isCurrent) cls += ' current';
-            if (d.data.type === 'current-state') cls += ' current-state';
+            if (d.data.type === 'current-state') {
+                cls += d.data.isDirty ? ' current-state dirty' : ' current-state clean';
+            }
             return cls;
         })
         .style('stroke-dasharray', function(d) {
@@ -220,11 +236,15 @@ function renderTree(data) {
             tooltip.transition().duration(200).style('opacity', 0);
         });
 
-    // Dot center for current-state node
+    // Dot center for current-state node (green=clean, orange=dirty)
     nodes.filter(function(d) { return d.data.type === 'current-state'; })
         .append('circle')
         .attr('r', 4)
-        .attr('fill', 'var(--color-warning, #f59e0b)')
+        .attr('fill', function(d) {
+            return d.data.isDirty
+                ? 'var(--color-warning, #f59e0b)'
+                : 'var(--color-success, #22c55e)';
+        })
         .attr('class', 'current-state-dot');
 
     // Labels below node
@@ -236,6 +256,14 @@ function renderTree(data) {
             return d.data.type === 'current-state' ? (nodeRadius * 0.7 + 14) : (nodeRadius + 14);
         })
         .attr('text-anchor', 'middle')
+        .style('fill', function(d) {
+            if (d.data.type === 'current-state') {
+                return d.data.isDirty
+                    ? 'var(--color-warning, #f59e0b)'
+                    : 'var(--color-success, #22c55e)';
+            }
+            return null;
+        })
         .text(function(d) {
             if (d.data.type === 'current-state') {
                 return 'Current State';
@@ -249,6 +277,11 @@ function renderTree(data) {
         .attr('class', 'current-state-info')
         .attr('dy', nodeRadius * 0.7 + 28)
         .attr('text-anchor', 'middle')
+        .style('fill', function(d) {
+            return d.data.isDirty
+                ? 'var(--color-warning, #f59e0b)'
+                : 'var(--color-success, #22c55e)';
+        })
         .text(function(d) { return d.data.description || ''; });
 
     // ★ indicator above current snapshot
@@ -287,9 +320,11 @@ function onNodeClick(event, snap) {
 function showTooltip(event, d) {
     var html;
     if (d.data.type === 'current-state') {
+        var stateColor = d.data.isDirty ? '#f59e0b' : '#22c55e';
+        var stateLabel = d.data.isDirty ? 'Unsaved changes' : 'Clean — matches snapshot';
         html = '<strong>Current State</strong><br>' +
-            '<span style="color:#fbbf24">' + (d.data.description || 'unknown') + '</span><br>' +
-            '<em style="opacity:0.7">Not yet saved as a snapshot</em>';
+            '<span style="color:' + stateColor + '">' + (d.data.description || 'unknown') + '</span><br>' +
+            '<em style="opacity:0.7">' + stateLabel + '</em>';
     } else {
         var desc = d.data.description || '';
         if (desc.length > 100) desc = desc.substring(0, 100) + '…';
