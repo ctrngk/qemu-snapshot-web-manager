@@ -312,7 +312,7 @@ function renderTree(data) {
         })
         .text(function(d) {
             var state = d.data.description || '';
-            var status = d.data.isDirty ? '· unsaved changes' : '· clean';
+            var status = d.data.isDirty ? '· unsaved changes' : '· identical, unchanged';
             return state + ' ' + status;
         });
 
@@ -365,7 +365,7 @@ function showTooltip(event, d) {
     var html;
     if (d.data.type === 'current-state') {
         var stateColor = d.data.isDirty ? '#f59e0b' : '#22c55e';
-        var stateLabel = d.data.isDirty ? 'Unsaved changes' : 'Clean — matches snapshot';
+        var stateLabel = d.data.isDirty ? 'Unsaved changes' : 'Identical, unchanged';
         html = '<strong>Current State</strong><br>' +
             '<span style="color:' + stateColor + '">' + (d.data.description || 'unknown') + '</span><br>' +
             '<em style="opacity:0.7">' + stateLabel + '</em>';
