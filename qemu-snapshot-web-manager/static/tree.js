@@ -5,6 +5,9 @@ window.currentVm = null;
 var _lastTreeJson = null;      // cache for smart diff
 var _selectedSnapId = null;    // preserve selection across refreshes
 
+// Label toggle: 'date' (default) or 'description'
+var _labelMode = localStorage.getItem('treeLabelMode') || 'date';
+
 // ── Tooltip setup ──────────────────────────────────────────────────
 var tooltip = d3.select('body').append('div')
     .attr('class', 'tree-tooltip')
@@ -85,7 +88,7 @@ function renderTree(data) {
 
     // Size tree to content
     var treeWidth = Math.max(200, leafCount * 100);
-    var treeHeight = Math.max(200, root.height * 120);
+    var treeHeight = Math.max(200, root.height * 140);
 
     var treeLayout = d3.tree().size([treeWidth, treeHeight]);
     treeLayout(root);
@@ -264,7 +267,7 @@ function renderTree(data) {
         })
         .attr('class', 'current-state-dot');
 
-    // Labels below node
+    // Labels below node (primary: name)
     nodes.append('text')
         .attr('class', function(d) {
             return d.data.type === 'current-state' ? 'node-label current-state-label' : 'node-label';
@@ -287,6 +290,14 @@ function renderTree(data) {
             }
             return d.data.name;
         });
+
+    // Subtitle line (date or description, toggleable)
+    nodes.filter(function(d) { return d.data.type !== 'current-state'; })
+        .append('text')
+        .attr('class', 'node-subtitle')
+        .attr('dy', nodeRadius + 28)
+        .attr('text-anchor', 'middle')
+        .text(function(d) { return getSubtitleText(d.data); });
 
     // VM state label below "Current State" node
     nodes.filter(function(d) { return d.data.type === 'current-state'; })
@@ -393,3 +404,37 @@ document.body.addEventListener('vmStateChanged', function() {
 // ── Auto-refresh: tree refreshes via vmStateChanged from VM list poll ──
 // No separate timer needed — the VM list polls every 10s and fires
 // vmStateChanged when content changes. Smart diff prevents flicker.
+
+// ── Label mode helpers ─────────────────────────────────────────────
+
+function getSubtitleText(data) {
+    if (_labelMode === 'description') {
+        var desc = data.description || '';
+        if (desc.length > 30) desc = desc.substring(0, 30) + '…';
+        return desc || '—';
+    }
+    // date mode (default)
+    return data.date || '';
+}
+
+function toggleLabelMode() {
+    _labelMode = (_labelMode === 'date') ? 'description' : 'date';
+    localStorage.setItem('treeLabelMode', _labelMode);
+
+    // Update existing subtitles without full re-render
+    d3.selectAll('.node-subtitle')
+        .text(function(d) { return getSubtitleText(d.data); });
+
+    // Update toggle button icon
+    updateToggleButton();
+}
+
+function updateToggleButton() {
+    var btn = document.getElementById('btn-toggle-labels');
+    if (btn) {
+        btn.textContent = _labelMode === 'date' ? '📅 Date' : '📝 Desc';
+        btn.title = _labelMode === 'date'
+            ? 'Showing timestamps — click to show descriptions'
+            : 'Showing descriptions — click to show timestamps';
+    }
+}

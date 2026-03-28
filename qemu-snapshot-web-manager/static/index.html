@@ -68,6 +68,11 @@
             <div class="panel-header">
                 <h2>Snapshot Tree</h2>
                 <div id="tree-toolbar" class="toolbar" style="display:none;">
+                    <button id="btn-toggle-labels" class="btn btn-sm btn-secondary"
+                            onclick="toggleLabelMode()"
+                            title="Toggle between date and description labels">
+                        📅 Date
+                    </button>
                     <button id="btn-create-snap" class="btn btn-sm btn-primary"
                             hx-get=""
                             hx-target="#modal-container"
@@ -229,6 +234,9 @@
             var btn = document.getElementById('btn-create-snap');
             btn.setAttribute('hx-get', '/api/vms/' + vmName + '/snapshots/form');
             htmx.process(btn);
+
+            // Initialize toggle button to reflect stored mode
+            if (typeof updateToggleButton === 'function') updateToggleButton();
 
             // Load snapshot tree (JSON for D3.js)
             if (typeof loadSnapshotTree === 'function') {
