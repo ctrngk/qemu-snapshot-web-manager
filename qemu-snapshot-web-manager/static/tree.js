@@ -299,7 +299,7 @@ function renderTree(data) {
         .attr('text-anchor', 'middle')
         .text(function(d) { return getSubtitleText(d.data); });
 
-    // VM state label below "Current State" node
+    // VM state label below "Current State" node (e.g., "shut off", "running")
     nodes.filter(function(d) { return d.data.type === 'current-state'; })
         .append('text')
         .attr('class', 'current-state-info')
@@ -310,11 +310,20 @@ function renderTree(data) {
                 ? 'var(--color-warning, #f59e0b)'
                 : 'var(--color-success, #22c55e)';
         })
-        .text(function(d) {
-            var state = d.data.description || '';
-            var status = d.data.isDirty ? '· unsaved changes' : '· identical, unchanged';
-            return state + ' ' + status;
-        });
+        .text(function(d) { return d.data.description || ''; });
+
+    // "identical, unchanged" label — only when clean (dirty already has link label)
+    nodes.filter(function(d) {
+            return d.data.type === 'current-state' && !d.data.isDirty;
+        })
+        .append('text')
+        .attr('class', 'current-state-status')
+        .attr('dy', nodeRadius * 0.7 + 42)
+        .attr('text-anchor', 'middle')
+        .style('fill', 'var(--color-success, #22c55e)')
+        .style('font-size', '0.6rem')
+        .style('font-style', 'italic')
+        .text('identical, unchanged');
 
     // ★ indicator above current snapshot
     nodes.filter(function(d) { return d.data.isCurrent; })
