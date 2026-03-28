@@ -2,6 +2,8 @@
 // Interactive tree with zoom/pan, tooltips, and HTMX integration
 
 window.currentVm = null;
+var _lastTreeJson = null;      // cache for smart diff
+var _selectedSnapId = null;    // preserve selection across refreshes
 
 // ── Tooltip setup ──────────────────────────────────────────────────
 var tooltip = d3.select('body').append('div')
@@ -19,17 +21,32 @@ var tooltip = d3.select('body').append('div')
     .style('box-shadow', '0 4px 12px rgba(0,0,0,0.3)');
 
 // ── Main entry point ───────────────────────────────────────────────
-function loadSnapshotTree(vmName) {
+function loadSnapshotTree(vmName, forceRefresh) {
+    // Reset cache when switching VMs
+    if (vmName !== window.currentVm) {
+        _lastTreeJson = null;
+        _selectedSnapId = null;
+        forceRefresh = true;
+    }
     window.currentVm = vmName;
     var container = document.getElementById('snapshot-tree');
-    container.innerHTML = '<p class="placeholder">Loading snapshot tree…</p>';
+
+    // Only show loading placeholder on first load (not on poll refreshes)
+    if (!_lastTreeJson || forceRefresh) {
+        container.innerHTML = '<p class="placeholder">Loading snapshot tree…</p>';
+    }
 
     fetch('/api/vms/' + vmName + '/snapshots')
         .then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
+            return r.text();
         })
-        .then(function(data) {
+        .then(function(text) {
+            // Smart diff: skip re-render if data hasn't changed
+            if (text === _lastTreeJson && !forceRefresh) return;
+            _lastTreeJson = text;
+
+            var data = JSON.parse(text);
             if (!data || !data.id || data.id === 'empty') {
                 showEmptyState(container);
                 return;
@@ -294,6 +311,15 @@ function renderTree(data) {
 
     // Initial fit
     fitToView(false);
+
+    // Restore selection after re-render (for smart refresh)
+    if (_selectedSnapId) {
+        d3.selectAll('.node-circle').each(function(d) {
+            if (d.data.id === _selectedSnapId) {
+                d3.select(this).classed('selected', true);
+            }
+        });
+    }
 }
 
 // ── Node click handler ─────────────────────────────────────────────
@@ -302,6 +328,9 @@ function onNodeClick(event, snap) {
 
     /* Ignore clicks on the virtual "Current State" node */
     if (snap.data.type === 'current-state') return;
+
+    // Save selection for preservation across refreshes
+    _selectedSnapId = snap.data.id;
 
     // Update selection styling
     d3.selectAll('.node-circle').classed('selected', false);
@@ -355,12 +384,13 @@ window.addEventListener('resize', function() {
 // ── HTMX integration: refresh on VM state change ───────────────────
 document.body.addEventListener('vmStateChanged', function() {
     if (window.currentVm) {
-        loadSnapshotTree(window.currentVm);
+        _lastTreeJson = null;  // force re-render on explicit state change
+        loadSnapshotTree(window.currentVm, true);
     }
     /* VM list refresh is handled by HTMX via hx-trigger="vmStateChanged from:body" */
 });
 
-// ── Auto-refresh snapshot tree every 10s (match VM list polling) ────
+// ── Auto-refresh snapshot tree every 30s (smart diff avoids flicker) ──
 var _treeRefreshTimer = null;
 function startTreePolling() {
     stopTreePolling();
@@ -368,7 +398,7 @@ function startTreePolling() {
         if (window.currentVm) {
             loadSnapshotTree(window.currentVm);
         }
-    }, 10000);
+    }, 30000);
 }
 function stopTreePolling() {
     if (_treeRefreshTimer) {
