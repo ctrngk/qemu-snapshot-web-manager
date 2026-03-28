@@ -695,9 +695,27 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
         snprintf(msg, sizeof(msg), "Current state saved. Reverted to '%s'", snap_name);
     else
         snprintf(msg, sizeof(msg), "Reverted to '%s'", snap_name);
-    char *html = render_success(msg);
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
-    free(html);
+    char *success_html = render_success(msg);
+
+    /* Also render the snapshot detail so the panel shows useful info */
+    snapshot_node_t *tree = NULL;
+    char *detail_html = NULL;
+    if (be->list_snapshots(vm_name, &tree) == 0 && tree) {
+        snapshot_node_t *snap = snapshot_tree_find(tree, snap_name);
+        if (snap)
+            detail_html = render_snapshot_detail(vm_name, snap);
+        snapshot_tree_free(tree);
+    }
+
+    /* Combine: success message + snapshot detail */
+    size_t total = strlen(success_html) + (detail_html ? strlen(detail_html) : 0) + 1;
+    char *combined = malloc(total);
+    snprintf(combined, total, "%s%s", success_html, detail_html ? detail_html : "");
+    free(success_html);
+    free(detail_html);
+
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, combined, "vmStateChanged");
+    free(combined);
     return ret;
 }
 
