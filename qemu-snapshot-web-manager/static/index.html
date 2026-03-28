@@ -185,11 +185,20 @@
         }
 
         /* ── HTMX Event Handlers ──────────────────────────────── */
+        var _lastVmListHtml = '';
         document.body.addEventListener('htmx:afterSwap', function(evt) {
             /* Re-apply active class to selected VM after VM list refreshes */
-            if (evt.detail.target && evt.detail.target.id === 'vm-list' && window.currentVm) {
-                var sel = document.querySelector('.vm-item[data-vm="' + window.currentVm + '"]');
-                if (sel) sel.classList.add('active');
+            if (evt.detail.target && evt.detail.target.id === 'vm-list') {
+                if (window.currentVm) {
+                    var sel = document.querySelector('.vm-item[data-vm="' + window.currentVm + '"]');
+                    if (sel) sel.classList.add('active');
+                }
+                /* Detect VM state changes and trigger tree refresh */
+                var newHtml = evt.detail.target.innerHTML;
+                if (_lastVmListHtml && newHtml !== _lastVmListHtml) {
+                    document.body.dispatchEvent(new CustomEvent('vmStateChanged'));
+                }
+                _lastVmListHtml = newHtml;
             }
         });
 
