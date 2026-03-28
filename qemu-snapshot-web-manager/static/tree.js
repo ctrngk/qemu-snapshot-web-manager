@@ -116,8 +116,23 @@ function renderTree(data) {
     svg.on('dblclick', function() { fitToView(true); });
 
     // ── Links ──────────────────────────────────────────────────────
+    // Arrow marker for current-state connector
+    svg.append('defs').append('marker')
+        .attr('id', 'arrow-unsaved')
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 6)
+        .attr('refX', 8)
+        .attr('refY', 3)
+        .attr('orient', 'auto')
+        .append('polygon')
+        .attr('points', '0 0, 8 3, 0 6')
+        .attr('fill', 'var(--color-warning, #f59e0b)');
+
+    // Regular links (solid)
     g.selectAll('.tree-link')
-        .data(root.links())
+        .data(root.links().filter(function(l) {
+            return l.target.data.type !== 'current-state';
+        }))
         .enter()
         .append('path')
         .attr('class', 'tree-link')
@@ -125,6 +140,45 @@ function renderTree(data) {
             .x(function(d) { return d.x; })
             .y(function(d) { return d.y; })
         );
+
+    // Current-state links (dashed arrow)
+    var csLinks = g.selectAll('.tree-link-unsaved')
+        .data(root.links().filter(function(l) {
+            return l.target.data.type === 'current-state';
+        }))
+        .enter();
+
+    csLinks.append('line')
+        .attr('class', 'tree-link-unsaved')
+        .attr('x1', function(d) { return d.source.x; })
+        .attr('y1', function(d) { return d.source.y + nodeRadius; })
+        .attr('x2', function(d) { return d.target.x; })
+        .attr('y2', function(d) { return d.target.y - nodeRadius * 0.7 - 2; })
+        .attr('stroke', 'var(--color-warning, #f59e0b)')
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', '6,4')
+        .attr('marker-end', 'url(#arrow-unsaved)');
+
+    // "unsaved changes" label on the dashed connector
+    csLinks.append('rect')
+        .attr('class', 'unsaved-label-bg')
+        .attr('x', function(d) { return (d.source.x + d.target.x) / 2 - 44; })
+        .attr('y', function(d) { return (d.source.y + d.target.y) / 2 - 8; })
+        .attr('width', 88)
+        .attr('height', 15)
+        .attr('rx', 3)
+        .attr('fill', 'var(--bg-primary, #0f172a)')
+        .attr('opacity', 0.9);
+
+    csLinks.append('text')
+        .attr('class', 'unsaved-label-text')
+        .attr('x', function(d) { return (d.source.x + d.target.x) / 2; })
+        .attr('y', function(d) { return (d.source.y + d.target.y) / 2 + 4; })
+        .attr('text-anchor', 'middle')
+        .attr('fill', 'var(--color-warning, #f59e0b)')
+        .attr('font-size', '0.6rem')
+        .attr('font-weight', 'bold')
+        .text('unsaved changes');
 
     // ── Nodes ──────────────────────────────────────────────────────
     var nodes = g.selectAll('.node')
@@ -148,7 +202,7 @@ function renderTree(data) {
             return cls;
         })
         .style('stroke-dasharray', function(d) {
-            if (d.data.type === 'current-state') return '3,2';
+            if (d.data.type === 'current-state') return '4,3';
             return d.data.type === 'external' ? '4,3' : null;
         })
         .on('click', function(event, d) {
@@ -165,6 +219,13 @@ function renderTree(data) {
         .on('mouseout', function() {
             tooltip.transition().duration(200).style('opacity', 0);
         });
+
+    // Dot center for current-state node
+    nodes.filter(function(d) { return d.data.type === 'current-state'; })
+        .append('circle')
+        .attr('r', 4)
+        .attr('fill', 'var(--color-warning, #f59e0b)')
+        .attr('class', 'current-state-dot');
 
     // Labels below node
     nodes.append('text')
@@ -224,15 +285,22 @@ function onNodeClick(event, snap) {
 
 // ── Tooltip ────────────────────────────────────────────────────────
 function showTooltip(event, d) {
-    var desc = d.data.description || '';
-    if (desc.length > 100) desc = desc.substring(0, 100) + '…';
-    var dateStr = d.data.date ? new Date(d.data.date).toLocaleString() : '—';
+    var html;
+    if (d.data.type === 'current-state') {
+        html = '<strong>Current State</strong><br>' +
+            '<span style="color:#fbbf24">' + (d.data.description || 'unknown') + '</span><br>' +
+            '<em style="opacity:0.7">Not yet saved as a snapshot</em>';
+    } else {
+        var desc = d.data.description || '';
+        if (desc.length > 100) desc = desc.substring(0, 100) + '…';
+        var dateStr = d.data.date ? new Date(d.data.date).toLocaleString() : '—';
 
-    var html =
-        '<strong>' + d.data.name + '</strong><br>' +
-        '<span style="opacity:0.8">' + dateStr + '</span><br>' +
-        'Type: ' + (d.data.type || 'unknown') +
-        (desc ? '<br><em>' + desc + '</em>' : '');
+        html =
+            '<strong>' + d.data.name + '</strong><br>' +
+            '<span style="opacity:0.8">' + dateStr + '</span><br>' +
+            'Type: ' + (d.data.type || 'unknown') +
+            (desc ? '<br><em>' + desc + '</em>' : '');
+    }
 
     tooltip.html(html)
         .style('left', (event.pageX + 14) + 'px')
@@ -256,3 +324,21 @@ document.body.addEventListener('vmStateChanged', function() {
     }
     /* VM list refresh is handled by HTMX via hx-trigger="vmStateChanged from:body" */
 });
+
+// ── Auto-refresh snapshot tree every 10s (match VM list polling) ────
+var _treeRefreshTimer = null;
+function startTreePolling() {
+    stopTreePolling();
+    _treeRefreshTimer = setInterval(function() {
+        if (window.currentVm) {
+            loadSnapshotTree(window.currentVm);
+        }
+    }, 10000);
+}
+function stopTreePolling() {
+    if (_treeRefreshTimer) {
+        clearInterval(_treeRefreshTimer);
+        _treeRefreshTimer = null;
+    }
+}
+startTreePolling();
