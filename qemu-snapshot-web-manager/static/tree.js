@@ -359,6 +359,23 @@ function renderTree(data) {
     // Initial fit
     fitToView(false);
 
+    // Enable/disable +New Snapshot based on dirty state
+    var csNode = root.descendants().find(function(d) {
+        return d.data.type === 'current-state';
+    });
+    var createBtn = document.getElementById('btn-create-snap');
+    if (createBtn && csNode) {
+        if (csNode.data.isDirty) {
+            createBtn.disabled = false;
+            createBtn.title = 'Create a new snapshot from current state';
+            createBtn.classList.remove('btn-disabled');
+        } else {
+            createBtn.disabled = true;
+            createBtn.title = 'No unsaved changes — current state is identical to snapshot';
+            createBtn.classList.add('btn-disabled');
+        }
+    }
+
     // Restore selection after re-render (for smart refresh)
     if (_selectedSnapId) {
         d3.selectAll('.node-circle').each(function(d) {
