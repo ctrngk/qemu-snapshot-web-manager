@@ -310,7 +310,11 @@ function renderTree(data) {
                 ? 'var(--color-warning, #f59e0b)'
                 : 'var(--color-success, #22c55e)';
         })
-        .text(function(d) { return d.data.description || ''; });
+        .text(function(d) {
+            var state = d.data.description || '';
+            var status = d.data.isDirty ? '· unsaved changes' : '· clean';
+            return state + ' ' + status;
+        });
 
     // ★ indicator above current snapshot
     nodes.filter(function(d) { return d.data.isCurrent; })
