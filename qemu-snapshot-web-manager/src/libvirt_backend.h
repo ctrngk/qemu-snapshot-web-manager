@@ -17,4 +17,9 @@ int lv_convert_nvram(const char *vm_name);
  * Returns 0=enabled, -1=error. Idempotent if already enabled. */
 int lv_enable_shared_memory(const char *vm_name);
 
+/* Edit snapshot description using libvirt REDEFINE.
+ * Returns 0=success, -1=error. */
+int lv_edit_snapshot_description(const char *vm_name, const char *snap_name,
+                                 const char *new_description);
+
 #endif

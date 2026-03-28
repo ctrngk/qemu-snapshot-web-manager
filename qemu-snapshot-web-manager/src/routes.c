@@ -501,6 +501,113 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
     return ret;
 }
 
+/* GET /api/vms/{vm}/snapshots/{snap}/edit — return edit form */
+static enum MHD_Result handle_edit_snapshot_form(struct MHD_Connection *conn,
+                                                  const char *vm_name,
+                                                  const char *snap_name)
+{
+    vm_backend_t *be = backend_get();
+    snapshot_node_t *tree = NULL;
+    if (!be || be->list_snapshots(vm_name, &tree) != 0 || !tree) {
+        char *html = render_error("Failed to load snapshots");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+    snapshot_node_t *snap = snapshot_tree_find(tree, snap_name);
+    if (!snap) {
+        snapshot_tree_free(tree);
+        char *html = render_error("Snapshot not found");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_NOT_FOUND, html);
+        free(html);
+        return ret;
+    }
+
+    char *esc_name = html_escape(snap_name);
+    char *esc_vm = html_escape(vm_name);
+    char *esc_desc = html_escape(snap->description ? snap->description : "");
+
+    char html[4096];
+    snprintf(html, sizeof(html),
+        "<div class='edit-snapshot-form'>"
+        "<h3>Edit Description</h3>"
+        "<p class='edit-snap-name'><strong>%s</strong></p>"
+        "<form hx-put='/api/vms/%s/snapshots/%s'"
+        "      hx-target='#snapshot-detail'"
+        "      hx-swap='innerHTML'>"
+        "<textarea name='description' rows='4' "
+        "placeholder='Enter description...'>%s</textarea>"
+        "<div class='form-actions'>"
+        "<button type='submit' class='btn btn-sm btn-primary'>Save</button>"
+        "<button type='button' class='btn btn-sm btn-secondary'"
+        "        hx-get='/api/vms/%s/snapshots/%s'"
+        "        hx-target='#snapshot-detail'"
+        "        hx-swap='innerHTML'>Cancel</button>"
+        "</div>"
+        "</form>"
+        "</div>",
+        esc_name, esc_vm, esc_name, esc_desc, esc_vm, esc_name);
+
+    free(esc_name);
+    free(esc_vm);
+    free(esc_desc);
+    snapshot_tree_free(tree);
+
+    return send_html(conn, MHD_HTTP_OK, html);
+}
+
+/* PUT /api/vms/{vm}/snapshots/{snap} — update description */
+static enum MHD_Result handle_edit_snapshot(struct MHD_Connection *conn,
+                                            const char *vm_name,
+                                            const char *snap_name,
+                                            const char *body)
+{
+    /* Parse description from form body */
+    char *desc = form_value(body, "description");
+    if (!desc) desc = str_dup("");  /* allow clearing description */
+
+    if (lv_edit_snapshot_description(vm_name, snap_name, desc) != 0) {
+        free(desc);
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Failed to update description: %s", err);
+        char *html = render_error(msg);
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+    free(desc);
+
+    /* Return success message + updated detail */
+    vm_backend_t *be = backend_get();
+    snapshot_node_t *tree = NULL;
+    char *detail_html = NULL;
+
+    if (be && be->list_snapshots(vm_name, &tree) == 0 && tree) {
+        snapshot_node_t *snap = snapshot_tree_find(tree, snap_name);
+        if (snap)
+            detail_html = render_snapshot_detail(vm_name, snap);
+        snapshot_tree_free(tree);
+    }
+
+    if (detail_html) {
+        char *html = str_fmt(
+            "<div class='alert success'>✅ Description updated</div>%s",
+            detail_html);
+        free(detail_html);
+        /* Also trigger tree refresh so labels update */
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html,
+                                                 "vmStateChanged");
+        free(html);
+        return ret;
+    }
+
+    char *html = render_success("Description updated");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
+    free(html);
+    return ret;
+}
+
 static enum MHD_Result handle_delete_snapshot(struct MHD_Connection *conn,
                                               const char *vm_name,
                                               const char *snap_name)
@@ -1141,8 +1248,9 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
     /* -- POST body accumulation ------------------------------------ */
     int is_post   = str_eq(method, "POST");
     int is_delete = str_eq(method, "DELETE");
+    int is_put    = str_eq(method, "PUT");
 
-    if (is_post || is_delete) {
+    if (is_post || is_delete || is_put) {
         if (*con_cls == NULL) {
             request_context_t *ctx = request_context_new();
             if (!ctx) return MHD_NO;
@@ -1232,11 +1340,21 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
             /* /api/vms/{name}/snapshots/{snap} */
             if (str_eq(method, "GET")) {
                 result = handle_snapshot_detail(connection, vm_name, snap_name);
+            } else if (is_put) {
+                request_context_t *ctx = (request_context_t *)*con_cls;
+                result = handle_edit_snapshot(connection, vm_name, snap_name,
+                                              ctx ? ctx->body : NULL);
             } else if (is_delete) {
                 result = handle_delete_snapshot(connection, vm_name, snap_name);
             } else {
                 result = send_405(connection);
             }
+            goto cleanup;
+        }
+
+        /* /api/vms/{name}/snapshots/{snap}/edit */
+        if (str_eq(seg5, "edit") && str_eq(method, "GET")) {
+            result = handle_edit_snapshot_form(connection, vm_name, snap_name);
             goto cleanup;
         }
 

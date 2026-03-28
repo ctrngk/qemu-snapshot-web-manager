@@ -676,6 +676,116 @@ static int lv_create_snapshot(const char *vm_name, const char *snap_name,
     return 0;
 }
 
+/* Edit snapshot description using REDEFINE flag.
+ * Gets current XML, replaces <description> content, redefines. */
+int lv_edit_snapshot_description(const char *vm_name, const char *snap_name,
+                                 const char *new_description)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    virDomainSnapshotPtr snap =
+        virDomainSnapshotLookupByName(dom, snap_name, 0);
+    if (!snap) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Snapshot '%s' not found", snap_name);
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Check if this is the current snapshot */
+    int is_current = 0;
+    virDomainSnapshotPtr cur = virDomainSnapshotCurrent(dom, 0);
+    if (cur) {
+        const char *cur_name = virDomainSnapshotGetName(cur);
+        if (cur_name && strcmp(cur_name, snap_name) == 0)
+            is_current = 1;
+        virDomainSnapshotFree(cur);
+    }
+
+    char *xml = virDomainSnapshotGetXMLDesc(snap,
+                    VIR_DOMAIN_SNAPSHOT_XML_SECURE);
+    virDomainSnapshotFree(snap);
+    if (!xml) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to get snapshot XML");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Build new XML: replace or insert <description> */
+    char *new_xml = NULL;
+    const char *desc_start = strstr(xml, "<description>");
+    const char *desc_end = strstr(xml, "</description>");
+
+    if (desc_start && desc_end) {
+        /* Replace existing description */
+        size_t prefix_len = (size_t)(desc_start - xml) + strlen("<description>");
+        size_t suffix_start = (size_t)(desc_end - xml);
+        size_t new_len = prefix_len + strlen(new_description) +
+                         strlen(xml) - suffix_start + 1;
+        new_xml = malloc(new_len);
+        if (new_xml) {
+            memcpy(new_xml, xml, prefix_len);
+            memcpy(new_xml + prefix_len, new_description, strlen(new_description));
+            strcpy(new_xml + prefix_len + strlen(new_description),
+                   xml + suffix_start);
+        }
+    } else {
+        /* No <description> tag — insert after <name>...</name> */
+        const char *name_end = strstr(xml, "</name>");
+        if (name_end) {
+            name_end += strlen("</name>");
+            size_t prefix_len = (size_t)(name_end - xml);
+            char desc_tag[2048];
+            snprintf(desc_tag, sizeof(desc_tag),
+                     "<description>%s</description>", new_description);
+            size_t new_len = prefix_len + strlen(desc_tag) +
+                             strlen(xml) - prefix_len + 1;
+            new_xml = malloc(new_len);
+            if (new_xml) {
+                memcpy(new_xml, xml, prefix_len);
+                memcpy(new_xml + prefix_len, desc_tag, strlen(desc_tag));
+                strcpy(new_xml + prefix_len + strlen(desc_tag),
+                       xml + prefix_len);
+            }
+        }
+    }
+    free(xml);
+
+    if (!new_xml) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to build modified snapshot XML");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    unsigned int flags = VIR_DOMAIN_SNAPSHOT_CREATE_REDEFINE;
+    if (is_current)
+        flags |= VIR_DOMAIN_SNAPSHOT_CREATE_CURRENT;
+
+    virDomainSnapshotPtr new_snap =
+        virDomainSnapshotCreateXML(dom, new_xml, flags);
+    free(new_xml);
+
+    if (!new_snap) {
+        virErrorPtr err = virGetLastError();
+        if (err && err->message)
+            snprintf(lv_last_error, sizeof(lv_last_error), "%s", err->message);
+        else
+            snprintf(lv_last_error, sizeof(lv_last_error), "REDEFINE failed");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    virDomainSnapshotFree(new_snap);
+    virDomainFree(dom);
+    log_msg(LOG_INFO, "libvirt: updated description for snapshot '%s' on '%s'",
+            snap_name, vm_name);
+    return 0;
+}
+
 static int lv_delete_snapshot(const char *vm_name, const char *snap_name,
                               int auto_merge)
 {

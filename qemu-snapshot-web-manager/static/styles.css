@@ -1066,6 +1066,57 @@ textarea.form-input {
     pointer-events: none;
 }
 
+/* Subtitle label (second line: date or description) */
+.node-subtitle {
+    font-size: 0.6rem;
+    fill: var(--text-secondary, #94a3b8);
+    pointer-events: none;
+    opacity: 0.8;
+}
+
+/* Edit description form */
+.edit-snapshot-form {
+    padding: 0.75rem 0;
+}
+.edit-snapshot-form h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+}
+.edit-snap-name {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+.edit-snapshot-form textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 4px;
+    background: var(--bg-primary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    font-size: 0.85rem;
+    resize: vertical;
+    min-height: 80px;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.edit-snapshot-form textarea:focus {
+    outline: none;
+    border-color: var(--accent-color, #3b82f6);
+}
+.edit-snapshot-form .form-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* Edit description button in detail panel */
+.edit-desc-btn {
+    margin-top: 0.25rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+}
+
 /* Revert confirmation panel */
 .revert-confirm {
     padding: 1rem;

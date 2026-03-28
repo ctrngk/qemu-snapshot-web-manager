@@ -287,6 +287,16 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
     sb_append(&sb, "    </div>\n");
     sb_appendf(&sb, "    <p class=\"snap-desc\">%s</p>\n", esc_desc);
 
+    /* Edit description button */
+    sb_appendf(&sb,
+        "    <button class=\"btn btn-sm btn-secondary edit-desc-btn\"\n"
+        "            hx-get=\"/api/vms/%s/snapshots/%s/edit\"\n"
+        "            hx-target=\"#snapshot-detail\"\n"
+        "            hx-swap=\"innerHTML\">\n"
+        "        \xe2\x9c\x8f Edit Description\n"
+        "    </button>\n",
+        esc_vm, esc_id);
+
     if (snap->is_current) {
         sb_append(&sb,
             "    <div class=\"snap-current\">\xe2\x98\x85 Current Snapshot</div>\n");
