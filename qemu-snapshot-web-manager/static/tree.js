@@ -148,6 +148,17 @@ function renderTree(data) {
         .attr('points', '0 0, 8 3, 0 6')
         .attr('fill', 'var(--color-warning, #f59e0b)');
 
+    svg.select('defs').append('marker')
+        .attr('id', 'arrow-clean')
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 6)
+        .attr('refX', 8)
+        .attr('refY', 3)
+        .attr('orient', 'auto')
+        .append('polygon')
+        .attr('points', '0 0, 8 3, 0 6')
+        .attr('fill', 'var(--color-success, #22c55e)');
+
     // Regular links (solid)
     g.selectAll('.tree-link')
         .data(root.links().filter(function(l) {
@@ -161,7 +172,7 @@ function renderTree(data) {
             .y(function(d) { return d.y; })
         );
 
-    // Current-state links (dashed arrow when dirty, solid subtle when clean)
+    // Current-state links (dashed arrow when dirty, solid arrow when clean)
     var csLinks = g.selectAll('.tree-link-unsaved')
         .data(root.links().filter(function(l) {
             return l.target.data.type === 'current-state';
@@ -186,10 +197,10 @@ function renderTree(data) {
             return d.target.data.isDirty ? '6,4' : null;
         })
         .attr('marker-end', function(d) {
-            return d.target.data.isDirty ? 'url(#arrow-unsaved)' : null;
+            return d.target.data.isDirty ? 'url(#arrow-unsaved)' : 'url(#arrow-clean)';
         });
 
-    // "unsaved changes" label — only shown when dirty
+    // "unsaved changes" label on dirty links
     var dirtyLinks = csLinks.filter(function(d) {
         return d.target.data.isDirty;
     });
@@ -213,6 +224,31 @@ function renderTree(data) {
         .attr('font-size', '0.6rem')
         .attr('font-weight', 'bold')
         .text('unsaved changes');
+
+    // "identical, unchanged" label on clean links
+    var cleanLinks = csLinks.filter(function(d) {
+        return !d.target.data.isDirty;
+    });
+
+    cleanLinks.append('rect')
+        .attr('class', 'clean-label-bg')
+        .attr('x', function(d) { return (d.source.x + d.target.x) / 2 - 56; })
+        .attr('y', function(d) { return (d.source.y + d.target.y) / 2 - 8; })
+        .attr('width', 112)
+        .attr('height', 15)
+        .attr('rx', 3)
+        .attr('fill', 'var(--bg-primary, #0f172a)')
+        .attr('opacity', 0.9);
+
+    cleanLinks.append('text')
+        .attr('class', 'clean-label-text')
+        .attr('x', function(d) { return (d.source.x + d.target.x) / 2; })
+        .attr('y', function(d) { return (d.source.y + d.target.y) / 2 + 4; })
+        .attr('text-anchor', 'middle')
+        .attr('fill', 'var(--color-success, #22c55e)')
+        .attr('font-size', '0.6rem')
+        .attr('font-weight', 'bold')
+        .text('identical, unchanged');
 
     // ── Nodes ──────────────────────────────────────────────────────
     var nodes = g.selectAll('.node')
@@ -311,19 +347,6 @@ function renderTree(data) {
                 : 'var(--color-success, #22c55e)';
         })
         .text(function(d) { return d.data.description || ''; });
-
-    // "identical, unchanged" label — only when clean (dirty already has link label)
-    nodes.filter(function(d) {
-            return d.data.type === 'current-state' && !d.data.isDirty;
-        })
-        .append('text')
-        .attr('class', 'current-state-status')
-        .attr('dy', nodeRadius * 0.7 + 42)
-        .attr('text-anchor', 'middle')
-        .style('fill', 'var(--color-success, #22c55e)')
-        .style('font-size', '0.6rem')
-        .style('font-style', 'italic')
-        .text('identical, unchanged');
 
     // ★ indicator above current snapshot
     nodes.filter(function(d) { return d.data.isCurrent; })
