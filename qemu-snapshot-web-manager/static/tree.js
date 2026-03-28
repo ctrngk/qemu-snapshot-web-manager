@@ -390,20 +390,6 @@ document.body.addEventListener('vmStateChanged', function() {
     /* VM list refresh is handled by HTMX via hx-trigger="vmStateChanged from:body" */
 });
 
-// ── Auto-refresh snapshot tree every 30s (smart diff avoids flicker) ──
-var _treeRefreshTimer = null;
-function startTreePolling() {
-    stopTreePolling();
-    _treeRefreshTimer = setInterval(function() {
-        if (window.currentVm) {
-            loadSnapshotTree(window.currentVm);
-        }
-    }, 30000);
-}
-function stopTreePolling() {
-    if (_treeRefreshTimer) {
-        clearInterval(_treeRefreshTimer);
-        _treeRefreshTimer = null;
-    }
-}
-startTreePolling();
+// ── Auto-refresh: tree refreshes via vmStateChanged from VM list poll ──
+// No separate timer needed — the VM list polls every 10s and fires
+// vmStateChanged when content changes. Smart diff prevents flicker.
