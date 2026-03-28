@@ -11,6 +11,7 @@ typedef struct snapshot_node {
     char *creation_time;           /* ISO-8601 timestamp string */
     snap_type_t type;              /* internal or external */
     int is_current;                /* 1 if this is the current/active snapshot */
+    int is_dirty;                  /* 1 if current-state has unsaved changes */
 
     struct snapshot_node *parent;  /* parent node (NULL for root) */
     struct snapshot_node **children;

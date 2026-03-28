@@ -1027,10 +1027,17 @@ textarea.form-input {
     pointer-events: none;
 }
 
-/* "Current State" virtual node */
-.node-circle.current-state {
+/* "Current State" virtual node — dirty (orange) */
+.node-circle.current-state.dirty {
     fill: none;
     stroke: var(--color-warning, #f59e0b);
+    stroke-width: 2px;
+    cursor: default;
+}
+/* "Current State" virtual node — clean (green) */
+.node-circle.current-state.clean {
+    fill: none;
+    stroke: var(--color-success, #22c55e);
     stroke-width: 2px;
     cursor: default;
 }
@@ -1043,11 +1050,13 @@ textarea.form-input {
 .current-state-label {
     font-size: 0.7rem;
     font-style: italic;
+}
+.current-state.dirty ~ .current-state-label,
+.node.dirty .current-state-label {
     fill: var(--color-warning, #f59e0b);
 }
 .current-state-info {
     font-size: 0.65rem;
-    fill: var(--color-warning, #f59e0b);
     pointer-events: none;
 }
 .unsaved-label-text {

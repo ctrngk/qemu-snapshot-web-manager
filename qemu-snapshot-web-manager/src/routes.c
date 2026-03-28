@@ -19,6 +19,74 @@
 /*  request context for POST body accumulation                        */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  Per-VM dirty state tracking (in-memory)                           */
+/*  After revert or create-snapshot → clean.                          */
+/*  When VM is detected running → dirty.                              */
+/*  Default for unknown shut-off VMs → clean.                         */
+/* ------------------------------------------------------------------ */
+
+#define MAX_TRACKED_VMS 128
+
+static struct {
+    char name[256];
+    int  is_clean;   /* 1 = state matches a snapshot, 0 = diverged */
+} vm_dirty_table[MAX_TRACKED_VMS];
+static int vm_dirty_count = 0;
+
+static void vm_mark_clean(const char *name)
+{
+    for (int i = 0; i < vm_dirty_count; i++) {
+        if (strcmp(vm_dirty_table[i].name, name) == 0) {
+            vm_dirty_table[i].is_clean = 1;
+            return;
+        }
+    }
+    if (vm_dirty_count < MAX_TRACKED_VMS) {
+        snprintf(vm_dirty_table[vm_dirty_count].name,
+                 sizeof(vm_dirty_table[0].name), "%s", name);
+        vm_dirty_table[vm_dirty_count].is_clean = 1;
+        vm_dirty_count++;
+    }
+}
+
+static void vm_mark_dirty(const char *name)
+{
+    for (int i = 0; i < vm_dirty_count; i++) {
+        if (strcmp(vm_dirty_table[i].name, name) == 0) {
+            vm_dirty_table[i].is_clean = 0;
+            return;
+        }
+    }
+    if (vm_dirty_count < MAX_TRACKED_VMS) {
+        snprintf(vm_dirty_table[vm_dirty_count].name,
+                 sizeof(vm_dirty_table[0].name), "%s", name);
+        vm_dirty_table[vm_dirty_count].is_clean = 0;
+        vm_dirty_count++;
+    }
+}
+
+/* Returns 1 if VM state has diverged from last snapshot. */
+static int vm_is_dirty(const char *name, vm_state_t state)
+{
+    /* Running/paused VMs are always dirty — actively accumulating changes */
+    if (state == VM_RUNNING || state == VM_PAUSED) {
+        vm_mark_dirty(name);
+        return 1;
+    }
+
+    /* Shut-off VM: check tracking table */
+    for (int i = 0; i < vm_dirty_count; i++) {
+        if (strcmp(vm_dirty_table[i].name, name) == 0)
+            return !vm_dirty_table[i].is_clean;
+    }
+
+    /* Not in table + shut off → assume clean (never started since server boot) */
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+
 typedef struct {
     char  *body;
     size_t body_size;
@@ -320,8 +388,7 @@ static enum MHD_Result handle_snapshot_tree(struct MHD_Connection *conn,
     if (be->list_vms(&vms, &vcount) == 0) {
         for (int i = 0; i < vcount; i++) {
             if (str_eq(vms[i]->name, vm_name)) {
-                int is_dirty = (vms[i]->state == VM_RUNNING ||
-                                vms[i]->state == VM_PAUSED);
+                int is_dirty = vm_is_dirty(vm_name, vms[i]->state);
                 snapshot_tree_add_current_state(tree,
                     vm_state_str(vms[i]->state), is_dirty);
                 break;
@@ -427,6 +494,8 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
         return ret;
     }
     char *html = render_success("Snapshot created");
+    /* Creating a snapshot captures the current state — mark clean */
+    vm_mark_clean(vm_name);
     enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
     free(html);
     return ret;
@@ -460,15 +529,17 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
         return send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
     }
 
-    /* Check VM state to determine if dirty */
+    /* Check VM state */
+    int is_running = 0;
     int is_dirty = 0;
     vm_info_t **vms = NULL;
     int vcount = 0;
     if (be->list_vms(&vms, &vcount) == 0) {
         for (int i = 0; i < vcount; i++) {
             if (str_eq(vms[i]->name, vm_name)) {
-                is_dirty = (vms[i]->state == VM_RUNNING ||
-                            vms[i]->state == VM_PAUSED);
+                is_running = (vms[i]->state == VM_RUNNING ||
+                              vms[i]->state == VM_PAUSED);
+                is_dirty = vm_is_dirty(vm_name, vms[i]->state);
                 break;
             }
         }
@@ -479,12 +550,29 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
     char *esc_snap = html_escape(snap_name);
     char html[4096];
 
-    if (is_dirty) {
+    if (is_running) {
+        /* VM must be stopped before reverting */
         snprintf(html, sizeof(html),
             "<div class=\"revert-confirm\">\n"
-            "  <h3>\xe2\x9a\xa0\xef\xb8\x8f Current state has been modified</h3>\n"
-            "  <p>The VM is currently running. Reverting will discard all changes "
-            "since the last snapshot.</p>\n"
+            "  <h3>\xe2\x9a\xa0\xef\xb8\x8f VM is still running</h3>\n"
+            "  <p>Please shut down the VM before reverting to a snapshot.</p>\n"
+            "  <div class=\"snap-actions\">\n"
+            "    <button class=\"btn btn-ghost\"\n"
+            "            hx-get=\"/api/vms/%s/snapshots/%s\"\n"
+            "            hx-target=\"#snapshot-detail\"\n"
+            "            hx-swap=\"innerHTML\">\n"
+            "      OK\n"
+            "    </button>\n"
+            "  </div>\n"
+            "</div>\n",
+            esc_vm, esc_snap);
+    } else if (is_dirty) {
+        /* VM is shut off but state has diverged from last snapshot */
+        snprintf(html, sizeof(html),
+            "<div class=\"revert-confirm\">\n"
+            "  <h3>\xe2\x9a\xa0\xef\xb8\x8f Current state has unsaved changes</h3>\n"
+            "  <p>The VM state has changed since the last snapshot. "
+            "You can save the current state before reverting.</p>\n"
             "  <div class=\"snap-actions\">\n"
             "    <button class=\"btn btn-primary\"\n"
             "            hx-post=\"/api/vms/%s/snapshots/%s/revert?save_current=1\"\n"
@@ -508,6 +596,7 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "</div>\n",
             esc_vm, esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
     } else {
+        /* VM is shut off and clean — simple confirmation */
         snprintf(html, sizeof(html),
             "<div class=\"revert-confirm\">\n"
             "  <h3>Revert to snapshot '%s'?</h3>\n"
@@ -547,6 +636,29 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
         return ret;
     }
 
+    /* Block revert while VM is running — must be shut off first */
+    vm_info_t **vms = NULL;
+    int vcount = 0;
+    if (be->list_vms(&vms, &vcount) == 0) {
+        for (int i = 0; i < vcount; i++) {
+            if (str_eq(vms[i]->name, vm_name)) {
+                if (vms[i]->state == VM_RUNNING ||
+                    vms[i]->state == VM_PAUSED) {
+                    be->free_vm_list(vms, vcount);
+                    char *html = render_error(
+                        "Cannot revert while VM is running. "
+                        "Please shut down the VM first.");
+                    enum MHD_Result ret = send_html_trigger(conn,
+                        MHD_HTTP_BAD_REQUEST, html, "vmStateChanged");
+                    free(html);
+                    return ret;
+                }
+                break;
+            }
+        }
+        be->free_vm_list(vms, vcount);
+    }
+
     /* Check if user wants to save current state first */
     const char *save = MHD_lookup_connection_value(conn,
         MHD_GET_ARGUMENT_KIND, "save_current");
@@ -574,6 +686,10 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
         free(html);
         return ret;
     }
+
+    /* Mark VM as clean — state now matches the snapshot */
+    vm_mark_clean(vm_name);
+
     char msg[256];
     if (save && str_eq(save, "1"))
         snprintf(msg, sizeof(msg), "Current state saved. Reverted to '%s'", snap_name);
