@@ -75,6 +75,9 @@ int main(int argc, char *argv[])
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
+    /* Ignore SIGPIPE — writing to a closed socket should not kill the server */
+    signal(SIGPIPE, SIG_IGN);
+
     log_msg(LOG_INFO, "qemu-snapshot-web-manager starting");
     log_msg(LOG_INFO, "  port:       %d", port);
     log_msg(LOG_INFO, "  static-dir: %s", static_dir);

@@ -187,7 +187,7 @@ int server_start(int port, const char *static_dir, const char *libvirt_uri)
     routes_init();
 
     daemon_handle = MHD_start_daemon(
-        MHD_USE_THREAD_PER_CONNECTION,
+        MHD_USE_INTERNAL_POLLING_THREAD,
         (uint16_t)port,
         NULL, NULL,             /* accept policy callback */
         &request_handler, NULL, /* access handler + extra arg */

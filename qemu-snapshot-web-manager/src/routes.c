@@ -264,7 +264,11 @@ static enum MHD_Result handle_vm_start(struct MHD_Connection *conn,
 {
     vm_backend_t *be = backend_get();
     if (!be || be->vm_start(vm_name) != 0) {
-        char *html = render_error("Failed to start VM");
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+            "Failed to start VM: %s", err[0] ? err : "unknown error");
+        char *html = render_error(msg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
@@ -281,7 +285,11 @@ static enum MHD_Result handle_vm_stop(struct MHD_Connection *conn,
 {
     vm_backend_t *be = backend_get();
     if (!be || be->vm_stop(vm_name) != 0) {
-        char *html = render_error("Failed to stop VM");
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+            "Failed to stop VM: %s", err[0] ? err : "unknown error");
+        char *html = render_error(msg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
@@ -487,7 +495,22 @@ static enum MHD_Result handle_snapshot_detail(struct MHD_Connection *conn,
         free(html);
         return ret;
     }
-    char *html = render_snapshot_detail(vm_name, snap);
+
+    /* Get VM state for button availability */
+    vm_state_t vm_state = VM_OTHER;
+    vm_info_t **vms = NULL;
+    int vcount = 0;
+    if (be->list_vms(&vms, &vcount) == 0) {
+        for (int i = 0; i < vcount; i++) {
+            if (str_eq(vms[i]->name, vm_name)) {
+                vm_state = vms[i]->state;
+                break;
+            }
+        }
+        be->free_vm_list(vms, vcount);
+    }
+
+    char *html = render_snapshot_detail(vm_name, snap, vm_state);
     enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
     snapshot_tree_free(tree);
@@ -658,8 +681,19 @@ static enum MHD_Result handle_edit_snapshot(struct MHD_Connection *conn,
 
     if (be && be->list_snapshots(vm_name, &tree) == 0 && tree) {
         snapshot_node_t *snap = snapshot_tree_find(tree, snap_name);
-        if (snap)
-            detail_html = render_snapshot_detail(vm_name, snap);
+        if (snap) {
+            /* Get current VM state for button rendering */
+            vm_state_t vs = VM_OTHER;
+            vm_info_t **vms = NULL;
+            int vc = 0;
+            if (be->list_vms(&vms, &vc) == 0) {
+                for (int i = 0; i < vc; i++) {
+                    if (str_eq(vms[i]->name, vm_name)) { vs = vms[i]->state; break; }
+                }
+                be->free_vm_list(vms, vc);
+            }
+            detail_html = render_snapshot_detail(vm_name, snap, vs);
+        }
         snapshot_tree_free(tree);
     }
 
@@ -903,7 +937,11 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
     }
 
     if (be->revert_snapshot(vm_name, snap_name) != 0) {
-        char *html = render_error("Failed to revert snapshot");
+        const char *err = lv_get_last_error();
+        char errmsg[512];
+        snprintf(errmsg, sizeof(errmsg),
+            "Failed to revert: %s", err[0] ? err : "unknown error");
+        char *html = render_error(errmsg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
@@ -925,8 +963,22 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
     char *detail_html = NULL;
     if (be->list_snapshots(vm_name, &tree) == 0 && tree) {
         snapshot_node_t *snap = snapshot_tree_find(tree, snap_name);
-        if (snap)
-            detail_html = render_snapshot_detail(vm_name, snap);
+        if (snap) {
+            /* After revert, re-check VM state (may have auto-resumed) */
+            vm_state_t post_state = VM_SHUTOFF;
+            vm_info_t **vms2 = NULL;
+            int vc2 = 0;
+            if (be->list_vms(&vms2, &vc2) == 0) {
+                for (int i = 0; i < vc2; i++) {
+                    if (str_eq(vms2[i]->name, vm_name)) {
+                        post_state = vms2[i]->state;
+                        break;
+                    }
+                }
+                be->free_vm_list(vms2, vc2);
+            }
+            detail_html = render_snapshot_detail(vm_name, snap, post_state);
+        }
         snapshot_tree_free(tree);
     }
 
@@ -948,7 +1000,12 @@ static enum MHD_Result handle_merge_snapshot(struct MHD_Connection *conn,
 {
     vm_backend_t *be = backend_get();
     if (!be || be->merge_snapshot(vm_name, snap_name) != 0) {
-        char *html = render_error("Failed to merge snapshot");
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+            "Failed to merge: %s. Make sure the VM is shut off.",
+            err[0] ? err : "unknown error");
+        char *html = render_error(msg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);

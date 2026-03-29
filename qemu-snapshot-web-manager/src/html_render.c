@@ -263,10 +263,13 @@ char *render_vm_list(vm_info_t **vms, int count)
 /*  render_snapshot_detail                                            */
 /* ------------------------------------------------------------------ */
 
-char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
+char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap,
+                             vm_state_t vm_state)
 {
     if (!snap)
         return str_dup("<p class=\"placeholder\">Snapshot not found</p>");
+
+    int vm_active = (vm_state == VM_RUNNING || vm_state == VM_PAUSED);
 
     char *esc_vm   = html_escape(vm_name);
     char *esc_id   = html_escape(snap->id);
@@ -316,30 +319,46 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
         "        </button>\n",
         esc_vm, esc_id);
 
-    /* Delete button */
-    sb_appendf(&sb,
-        "        <button class=\"btn btn-danger\"\n"
-        "                hx-delete=\"/api/vms/%s/snapshots/%s\"\n"
-        "                hx-target=\"#snapshot-tree\"\n"
-        "                hx-swap=\"innerHTML\"\n"
-        "                hx-indicator=\"#snap-action-loading\"\n"
-        "                hx-confirm=\"Delete snapshot '%s'?\">\n"
-        "            \xf0\x9f\x97\x91 Delete\n"
-        "        </button>\n",
-        esc_vm, esc_id, esc_id);
-
-    /* Merge button (only for external snapshots) */
-    if (snap->type == SNAP_EXTERNAL) {
+    /* Delete button — disabled while VM is running/paused */
+    if (vm_active) {
         sb_appendf(&sb,
-            "        <button class=\"btn btn-warning\"\n"
-            "                hx-post=\"/api/vms/%s/snapshots/%s/merge\"\n"
+            "        <button class=\"btn btn-danger\" disabled\n"
+            "                title=\"Shut down the VM to delete snapshots\">\n"
+            "            \xf0\x9f\x97\x91 Delete\n"
+            "        </button>\n");
+    } else {
+        sb_appendf(&sb,
+            "        <button class=\"btn btn-danger\"\n"
+            "                hx-delete=\"/api/vms/%s/snapshots/%s\"\n"
             "                hx-target=\"#snapshot-tree\"\n"
             "                hx-swap=\"innerHTML\"\n"
             "                hx-indicator=\"#snap-action-loading\"\n"
-            "                hx-confirm=\"Merge snapshot '%s'?\">\n"
-            "            \xe2\x8a\x95 Merge\n"
+            "                hx-confirm=\"Delete snapshot '%s'?\">\n"
+            "            \xf0\x9f\x97\x91 Delete\n"
             "        </button>\n",
             esc_vm, esc_id, esc_id);
+    }
+
+    /* Merge button (only for external snapshots) */
+    if (snap->type == SNAP_EXTERNAL) {
+        if (vm_active) {
+            sb_append(&sb,
+                "        <button class=\"btn btn-warning\" disabled\n"
+                "                title=\"Shut down the VM to merge snapshots\">\n"
+                "            \xe2\x8a\x95 Merge\n"
+                "        </button>\n");
+        } else {
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-warning\"\n"
+                "                hx-post=\"/api/vms/%s/snapshots/%s/merge\"\n"
+                "                hx-target=\"#snapshot-tree\"\n"
+                "                hx-swap=\"innerHTML\"\n"
+                "                hx-indicator=\"#snap-action-loading\"\n"
+                "                hx-confirm=\"Merge snapshot '%s'?\">\n"
+                "            \xe2\x8a\x95 Merge\n"
+                "        </button>\n",
+                esc_vm, esc_id, esc_id);
+        }
     }
 
     sb_append(&sb, "    </div>\n");
