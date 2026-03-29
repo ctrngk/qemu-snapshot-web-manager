@@ -89,7 +89,7 @@ function renderTree(data) {
     var leafCount = root.leaves().length;
 
     // Size tree to content
-    var treeWidth = Math.max(200, leafCount * 100);
+    var treeWidth = Math.max(200, leafCount * 160);
     var treeHeight = Math.max(200, root.height * 140);
 
     var treeLayout = d3.tree().size([treeWidth, treeHeight]);
@@ -326,7 +326,9 @@ function renderTree(data) {
             if (d.data.type === 'current-state') {
                 return 'Current State';
             }
-            return d.data.name;
+            var name = d.data.name || '';
+            if (name.length > 20) return name.substring(0, 18) + '…';
+            return name;
         });
 
     // Subtitle line (date or description, toggleable)
