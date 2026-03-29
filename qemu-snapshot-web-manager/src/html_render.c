@@ -401,7 +401,9 @@ char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
         "              hx-target=\"#snap-form-error\"\n"
         "              hx-swap=\"innerHTML\"\n"
         "              hx-indicator=\"#snap-creating\"\n"
-        "              hx-on::after-request=\"if(event.detail.successful) this.closest('.modal-overlay').remove()\">\n",
+        "              hx-on::after-request=\"if(event.detail.successful){"
+        "document.getElementById('vm-notification').innerHTML=event.detail.xhr.responseText;"
+        "this.closest('.modal-overlay').remove();}\">\n",
         esc_vm);
     sb_append(&sb,
         "            <div class=\"form-group\">\n"
