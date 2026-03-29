@@ -136,6 +136,8 @@ sudo systemctl enable --now qemu-guest-agent
 
 Mount status is automatically detected and shown as **✓ Mounted** or **✗ Not Mounted** badges in the UI. Without the guest agent, you can still see shared folders and their mount commands — you'll just need to run the mount command manually inside the VM.
 
+> **Cross-OS auto-mount:** The Auto-Mount feature works on Linux (systemd and OpenRC), Windows, FreeBSD, and macOS guests. QSWM auto-detects the guest OS and installs the right background service — just click "⚙️ Setup Auto-Mount" in the Shared Folders section.
+
 > **SELinux note (Fedora/RHEL):** If mounts fail even with the guest agent installed, SELinux may be blocking the operation. Run this inside the VM:
 > ```bash
 > sudo semanage permissive -a virt_qemu_ga_t
