@@ -4,6 +4,7 @@
 window.currentVm = null;
 var _lastTreeJson = null;      // cache for smart diff
 var _selectedSnapId = null;    // preserve selection across refreshes
+var _selectedIsCurrent = true; // is the selected snapshot the current one?
 
 // Label toggle: 'date' (default) or 'description'
 var _labelMode = localStorage.getItem('treeLabelMode') || 'date';
@@ -29,6 +30,7 @@ function loadSnapshotTree(vmName, forceRefresh) {
     if (vmName !== window.currentVm) {
         _lastTreeJson = null;
         _selectedSnapId = null;
+        _selectedIsCurrent = true;
         forceRefresh = true;
     }
     window.currentVm = vmName;
@@ -395,13 +397,14 @@ function onNodeClick(event, snap) {
 
     // Save selection for preservation across refreshes
     _selectedSnapId = snap.data.id;
+    _selectedIsCurrent = !!snap.data.isCurrent;
 
     // Update selection styling
     d3.selectAll('.node-circle').classed('selected', false);
     d3.select(event.currentTarget).classed('selected', true);
 
     // Disable Start button if a non-current snapshot is selected
-    updateStartButton(snap.data.isCurrent);
+    updateStartButton(_selectedIsCurrent);
 
     // Load snapshot detail via HTMX
     if (window.currentVm && snap.data.id) {
