@@ -1717,6 +1717,351 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
 }
 
 /* ------------------------------------------------------------------ */
+/*  orphan snapshot scanner                                           */
+/* ------------------------------------------------------------------ */
+
+/* Helper: get list of snapshot names inside a qcow2 file via qemu-img.
+ * Returns count of names found, fills *names (caller frees each + array).
+ * Returns -1 on error. VM must be shut off. */
+static int qcow2_snapshot_names(const char *disk_path,
+                                char ***names_out, int *count_out)
+{
+    *names_out = NULL;
+    *count_out = 0;
+
+    /* Build command: qemu-img snapshot -l <path> */
+    char cmd[PATH_MAX + 64];
+    snprintf(cmd, sizeof(cmd), "qemu-img snapshot -l '%s' 2>/dev/null", disk_path);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return -1;
+
+    /* Parse output lines. Format:
+     * Snapshot list:
+     * ID  TAG  VM_SIZE  DATE  VM_CLOCK  ICOUNT
+     * 1   name-here   0 B  2026-...  ...
+     * Lines with numeric ID in first column have snapshot data. */
+    char **names = NULL;
+    int count = 0, capacity = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        /* Skip header lines — snapshot lines start with digits */
+        const char *p = line;
+        while (*p == ' ') p++;
+        if (*p < '0' || *p > '9') continue;
+
+        /* Skip ID field */
+        while (*p >= '0' && *p <= '9') p++;
+        while (*p == ' ') p++;
+
+        /* TAG field: everything up to the VM_SIZE column.
+         * VM_SIZE is a number followed by B/KiB/MiB/GiB.
+         * We find the LAST occurrence of a size pattern to delimit TAG. */
+        const char *tag_start = p;
+
+        /* Find the size pattern: digits followed by space and unit */
+        const char *size_ptr = NULL;
+        const char *q = tag_start;
+        while (*q) {
+            if (*q >= '0' && *q <= '9') {
+                /* Check if this looks like a size: number followed by
+                 * optional decimal, then space/unit */
+                const char *num_start = q;
+                while (*q >= '0' && *q <= '9') q++;
+                if (*q == '.') { q++; while (*q >= '0' && *q <= '9') q++; }
+                if (*q == ' ') {
+                    const char *after = q + 1;
+                    if (strncmp(after, "B ", 2) == 0 ||
+                        strncmp(after, "KiB ", 4) == 0 ||
+                        strncmp(after, "MiB ", 4) == 0 ||
+                        strncmp(after, "GiB ", 4) == 0) {
+                        size_ptr = num_start;
+                    }
+                }
+            } else {
+                q++;
+            }
+        }
+
+        if (!size_ptr) continue;
+
+        /* TAG = text from tag_start up to size_ptr, trimmed */
+        size_t tag_len = (size_t)(size_ptr - tag_start);
+        while (tag_len > 0 && tag_start[tag_len - 1] == ' ') tag_len--;
+        if (tag_len == 0) continue;
+
+        char *tag = malloc(tag_len + 1);
+        if (!tag) continue;
+        memcpy(tag, tag_start, tag_len);
+        tag[tag_len] = '\0';
+
+        /* Append to array */
+        if (count >= capacity) {
+            capacity = capacity ? capacity * 2 : 16;
+            char **tmp = realloc(names, sizeof(char *) * (size_t)capacity);
+            if (!tmp) { free(tag); continue; }
+            names = tmp;
+        }
+        names[count++] = tag;
+    }
+    pclose(fp);
+
+    *names_out = names;
+    *count_out = count;
+    return count;
+}
+
+/* Helper: get all disk paths (qcow2) from domain XML.
+ * Returns count, fills *paths (caller frees each + array). */
+static int get_domain_disk_paths(virDomainPtr dom,
+                                 char ***paths_out, int *count_out)
+{
+    *paths_out = NULL;
+    *count_out = 0;
+
+    char *xml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
+    if (!xml) return -1;
+
+    char **paths = NULL;
+    int count = 0, capacity = 0;
+
+    /* Find all <disk type='file' device='disk'> with qcow2 driver */
+    const char *pos = xml;
+    while (pos && *pos) {
+        /* Try both quote styles */
+        const char *p1 = strstr(pos, "<disk type='file'");
+        const char *p2 = strstr(pos, "<disk type=\"file\"");
+        /* Pick the earlier match */
+        if (p1 && p2) pos = (p1 < p2) ? p1 : p2;
+        else if (p1)  pos = p1;
+        else if (p2)  pos = p2;
+        else          break;
+        /* Find end of this <disk> element */
+        const char *disk_end = strstr(pos, "</disk>");
+        if (!disk_end) break;
+
+        /* Only include qcow2 disks (not cdrom, not raw) */
+        size_t disk_len = (size_t)(disk_end - pos);
+        char *disk_xml = malloc(disk_len + 1);
+        if (!disk_xml) { pos = disk_end; continue; }
+        memcpy(disk_xml, pos, disk_len);
+        disk_xml[disk_len] = '\0';
+
+        if (strstr(disk_xml, "type='qcow2'") ||
+            strstr(disk_xml, "type=\"qcow2\"")) {
+            /* Extract source file path */
+            char *source_file = extract_xml_attr(disk_xml, "source", "file");
+            if (source_file) {
+                if (count >= capacity) {
+                    capacity = capacity ? capacity * 2 : 4;
+                    char **tmp = realloc(paths, sizeof(char *) * (size_t)capacity);
+                    if (tmp) paths = tmp;
+                }
+                if (count < capacity)
+                    paths[count++] = source_file;
+                else
+                    free(source_file);
+            }
+        }
+        free(disk_xml);
+        pos = disk_end + 7;
+    }
+
+    /* Also check NVRAM (UEFI VMs have snapshots in NVRAM qcow2 too) */
+    char *nvram_path = extract_xml_content_ext(xml, "nvram");
+    if (nvram_path && strlen(nvram_path) > 0) {
+        char *nvram_fmt = extract_xml_attr(xml, "nvram", "format");
+        if (nvram_fmt && str_eq(nvram_fmt, "qcow2")) {
+            if (count >= capacity) {
+                capacity = capacity ? capacity * 2 : 4;
+                char **tmp = realloc(paths, sizeof(char *) * (size_t)capacity);
+                if (tmp) paths = tmp;
+            }
+            if (count < capacity)
+                paths[count++] = nvram_path;
+            else
+                free(nvram_path);
+            nvram_path = NULL;  /* ownership transferred */
+        }
+        free(nvram_fmt);
+    }
+    free(nvram_path);
+    free(xml);
+
+    *paths_out = paths;
+    *count_out = count;
+    return count;
+}
+
+int lv_scan_orphan_snapshots(const char *vm_name,
+                              char ***orphan_names_out, int *orphan_count_out)
+{
+    *orphan_names_out = NULL;
+    *orphan_count_out = 0;
+
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    /* Only scan shut-off VMs (qemu-img can't read locked files) */
+    int state = 0;
+    virDomainGetState(dom, &state, NULL, 0);
+    if (state != VIR_DOMAIN_SHUTOFF) {
+        virDomainFree(dom);
+        return 0;  /* not an error, just can't scan */
+    }
+
+    /* Get libvirt snapshot names */
+    char **lv_names = NULL;
+    int lv_count = 0;
+    virDomainSnapshotPtr *snaps = NULL;
+    int n = virDomainSnapshotNum(dom, 0);
+    if (n > 0) {
+        lv_names = calloc((size_t)n, sizeof(char *));
+        snaps = calloc((size_t)n, sizeof(virDomainSnapshotPtr));
+        if (lv_names && snaps) {
+            virDomainSnapshotListNames(dom, lv_names, n, 0);
+            lv_count = n;
+        }
+    }
+
+    /* Get disk paths */
+    char **disk_paths = NULL;
+    int disk_count = 0;
+    get_domain_disk_paths(dom, &disk_paths, &disk_count);
+
+    /* For each disk, get qcow2 names and find orphans */
+    char **orphans = NULL;
+    int orphan_count = 0, orphan_cap = 0;
+
+    for (int d = 0; d < disk_count; d++) {
+        char **qcow2_names = NULL;
+        int qcow2_count = 0;
+        if (qcow2_snapshot_names(disk_paths[d], &qcow2_names, &qcow2_count) < 0)
+            continue;
+
+        for (int q = 0; q < qcow2_count; q++) {
+            /* Is this name in libvirt metadata? */
+            int found = 0;
+            for (int l = 0; l < lv_count; l++) {
+                if (str_eq(qcow2_names[q], lv_names[l])) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                /* Check if we already added this orphan (from another disk) */
+                int dup = 0;
+                for (int o = 0; o < orphan_count; o++) {
+                    if (str_eq(orphans[o], qcow2_names[q])) { dup = 1; break; }
+                }
+                if (!dup) {
+                    if (orphan_count >= orphan_cap) {
+                        orphan_cap = orphan_cap ? orphan_cap * 2 : 16;
+                        char **tmp = realloc(orphans, sizeof(char *) * (size_t)orphan_cap);
+                        if (tmp) orphans = tmp;
+                    }
+                    if (orphan_count < orphan_cap)
+                        orphans[orphan_count++] = str_dup(qcow2_names[q]);
+                }
+            }
+            free(qcow2_names[q]);
+        }
+        free(qcow2_names);
+        free(disk_paths[d]);
+    }
+    free(disk_paths);
+
+    /* Cleanup libvirt names */
+    for (int i = 0; i < lv_count; i++) free(lv_names[i]);
+    free(lv_names);
+    free(snaps);
+    virDomainFree(dom);
+
+    *orphan_names_out = orphans;
+    *orphan_count_out = orphan_count;
+    return orphan_count;
+}
+
+int lv_cleanup_orphan_snapshots(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    /* Only on shut-off VMs */
+    int state = 0;
+    virDomainGetState(dom, &state, NULL, 0);
+    if (state != VIR_DOMAIN_SHUTOFF) {
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "VM must be shut off to clean orphan snapshots");
+        virDomainFree(dom);
+        return -1;
+    }
+
+    /* Get disk paths */
+    char **disk_paths = NULL;
+    int disk_count = 0;
+    get_domain_disk_paths(dom, &disk_paths, &disk_count);
+
+    /* Get libvirt snapshot names */
+    char **lv_names = NULL;
+    int lv_count = virDomainSnapshotNum(dom, 0);
+    if (lv_count > 0) {
+        lv_names = calloc((size_t)lv_count, sizeof(char *));
+        if (lv_names)
+            virDomainSnapshotListNames(dom, lv_names, lv_count, 0);
+    }
+
+    int total_cleaned = 0;
+
+    for (int d = 0; d < disk_count; d++) {
+        char **qcow2_names = NULL;
+        int qcow2_count = 0;
+        if (qcow2_snapshot_names(disk_paths[d], &qcow2_names, &qcow2_count) < 0) {
+            free(disk_paths[d]);
+            continue;
+        }
+
+        for (int q = 0; q < qcow2_count; q++) {
+            /* Is this name in libvirt metadata? */
+            int found = 0;
+            for (int l = 0; l < lv_count; l++) {
+                if (str_eq(qcow2_names[q], lv_names[l])) { found = 1; break; }
+            }
+            if (!found) {
+                /* Delete orphan from qcow2 */
+                char cmd[PATH_MAX + 256];
+                snprintf(cmd, sizeof(cmd),
+                         "qemu-img snapshot -d '%s' '%s' 2>&1",
+                         qcow2_names[q], disk_paths[d]);
+                int rc = system(cmd);
+                if (rc == 0) {
+                    log_msg(LOG_INFO, "Cleaned orphan snapshot '%s' from %s",
+                            qcow2_names[q], disk_paths[d]);
+                    total_cleaned++;
+                } else {
+                    log_msg(LOG_ERROR, "Failed to clean orphan '%s' from %s",
+                            qcow2_names[q], disk_paths[d]);
+                }
+            }
+            free(qcow2_names[q]);
+        }
+        free(qcow2_names);
+        free(disk_paths[d]);
+    }
+    free(disk_paths);
+
+    for (int i = 0; i < lv_count; i++) free(lv_names[i]);
+    free(lv_names);
+    virDomainFree(dom);
+
+    log_msg(LOG_INFO, "Cleaned %d orphan snapshot(s) from VM '%s'",
+            total_cleaned, vm_name);
+    return total_cleaned;
+}
+
+/* ------------------------------------------------------------------ */
 /*  vtable                                                            */
 /* ------------------------------------------------------------------ */
 

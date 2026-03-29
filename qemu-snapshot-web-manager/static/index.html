@@ -81,6 +81,7 @@
                     </button>
                 </div>
             </div>
+            <div id="orphan-check"></div>
             <div id="snapshot-tree" class="tree-container">
                 <p class="placeholder">Select a VM to view snapshots</p>
             </div>
@@ -250,6 +251,16 @@
                 document.getElementById('snapshot-tree').innerHTML =
                     '<p class="placeholder">Tree visualization loading…</p>';
             }
+
+            // Load orphan snapshot check (polls every 5 min + on VM state change)
+            var orphanDiv = document.getElementById('orphan-check');
+            orphanDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/orphan-check');
+            orphanDiv.setAttribute('hx-trigger', 'load, vmStateChanged from:body, every 300s');
+            orphanDiv.setAttribute('hx-swap', 'innerHTML');
+            htmx.process(orphanDiv);
+            htmx.ajax('GET', '/api/vms/' + vmName + '/orphan-check', {
+                target: '#orphan-check', swap: 'innerHTML'
+            });
 
             // Load shared folders via HTMX
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {

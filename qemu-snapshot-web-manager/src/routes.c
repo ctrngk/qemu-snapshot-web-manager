@@ -369,6 +369,62 @@ static enum MHD_Result handle_convert_nvram(struct MHD_Connection *conn,
     return ret;
 }
 
+/* ------------------------------------------------------------------ */
+/*  orphan snapshot scan & cleanup                                     */
+/* ------------------------------------------------------------------ */
+
+static enum MHD_Result handle_orphan_check(struct MHD_Connection *conn,
+                                            const char *vm_name)
+{
+    char **orphan_names = NULL;
+    int orphan_count = 0;
+    int rc = lv_scan_orphan_snapshots(vm_name, &orphan_names, &orphan_count);
+
+    if (rc < 0) {
+        /* Error scanning — return empty (don't show warning on error) */
+        return send_html(conn, MHD_HTTP_OK, "");
+    }
+
+    char *html = render_orphan_warning(vm_name, orphan_names, orphan_count);
+
+    for (int i = 0; i < orphan_count; i++) free(orphan_names[i]);
+    free(orphan_names);
+
+    enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+    free(html);
+    return ret;
+}
+
+static enum MHD_Result handle_orphan_cleanup(struct MHD_Connection *conn,
+                                              const char *vm_name)
+{
+    int cleaned = lv_cleanup_orphan_snapshots(vm_name);
+    if (cleaned < 0) {
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Cleanup failed: %s", err);
+        char *html = render_error(msg);
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+
+    if (cleaned == 0) {
+        char *html = render_success("No orphan snapshots found");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
+        free(html);
+        return ret;
+    }
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Cleaned %d orphan snapshot%s from disk files",
+             cleaned, cleaned == 1 ? "" : "s");
+    char *html = render_success(msg);
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
+    free(html);
+    return ret;
+}
+
 static enum MHD_Result handle_snapshot_tree(struct MHD_Connection *conn,
                                             const char *vm_name)
 {
@@ -1498,6 +1554,18 @@ enum MHD_Result route_dispatch(struct MHD_Connection *connection,
     /* /api/vms/{name}/convert-nvram */
     if (str_eq(seg3, "convert-nvram") && is_post) {
         result = handle_convert_nvram(connection, vm_name);
+        goto cleanup;
+    }
+
+    /* /api/vms/{name}/orphan-check */
+    if (str_eq(seg3, "orphan-check") && str_eq(method, "GET")) {
+        result = handle_orphan_check(connection, vm_name);
+        goto cleanup;
+    }
+
+    /* /api/vms/{name}/orphan-cleanup */
+    if (str_eq(seg3, "orphan-cleanup") && is_post) {
+        result = handle_orphan_cleanup(connection, vm_name);
         goto cleanup;
     }
 
