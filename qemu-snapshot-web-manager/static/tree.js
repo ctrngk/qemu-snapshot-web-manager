@@ -383,6 +383,9 @@ function renderTree(data) {
         d3.selectAll('.node-circle').each(function(d) {
             if (d.data.id === _selectedSnapId) {
                 d3.select(this).classed('selected', true);
+                // After revert, selected snapshot may now be current
+                _selectedIsCurrent = !!d.data.isCurrent;
+                updateStartButton(_selectedIsCurrent);
             }
         });
     }
