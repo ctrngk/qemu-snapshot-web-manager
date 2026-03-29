@@ -14,8 +14,10 @@ char *render_vm_list(vm_info_t **vms, int count);
 /* Render snapshot detail panel for a selected snapshot.
  * Includes revert/delete/merge action buttons with HTMX attributes.
  * vm_name is needed to construct the API URLs.
+ * vm_state controls button availability (e.g., delete disabled while running).
  * Returns malloc'd HTML string. */
-char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap);
+char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap,
+                             vm_state_t vm_state);
 
 /* Render the create-snapshot form (shown in modal or detail panel).
  * Returns malloc'd HTML string. */
