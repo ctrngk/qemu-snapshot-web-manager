@@ -655,7 +655,6 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
 
     /* Check VM state */
     int is_running = 0;
-    int is_paused = 0;
     int is_dirty = 0;
     vm_info_t **vms = NULL;
     int vcount = 0;
@@ -663,7 +662,6 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
         for (int i = 0; i < vcount; i++) {
             if (str_eq(vms[i]->name, vm_name)) {
                 is_running = (vms[i]->state == VM_RUNNING);
-                is_paused  = (vms[i]->state == VM_PAUSED);
                 is_dirty = vm_is_dirty(vm_name, vms[i]->state);
                 break;
             }
@@ -691,32 +689,6 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "  </div>\n"
             "</div>\n",
             esc_vm, esc_snap);
-    } else if (is_paused) {
-        /* VM is paused — offer to force-stop and revert */
-        snprintf(html, sizeof(html),
-            "<div class=\"revert-confirm\">\n"
-            "  <h3>\xe2\x9a\xa0\xef\xb8\x8f VM is paused</h3>\n"
-            "  <p>The VM will be stopped before reverting to snapshot '%s'.</p>\n"
-            "  <div class=\"snap-actions\">\n"
-            "    <button class=\"btn btn-primary\"\n"
-            "            hx-post=\"/api/vms/%s/snapshots/%s/revert?force_stop=1\"\n"
-            "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\"\n"
-            "            hx-indicator=\"#revert-loading\">\n"
-            "      \xe2\x8f\xb9 Stop &amp; Revert\n"
-            "    </button>\n"
-            "    <button class=\"btn btn-ghost\"\n"
-            "            hx-get=\"/api/vms/%s/snapshots/%s\"\n"
-            "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\">\n"
-            "      Cancel\n"
-            "    </button>\n"
-            "  </div>\n"
-            "  <div id=\"revert-loading\" class=\"htmx-indicator snap-action-busy\">\n"
-            "    <span class=\"spinner\"></span> Reverting\xe2\x80\xa6\n"
-            "  </div>\n"
-            "</div>\n",
-            esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
     } else if (is_dirty) {
         /* VM is shut off but state has diverged from last snapshot */
         snprintf(html, sizeof(html),
@@ -796,9 +768,8 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
         return ret;
     }
 
-    /* Block revert while VM is running — must be shut off (or paused with force_stop) */
-    const char *force_stop = MHD_lookup_connection_value(conn,
-        MHD_GET_ARGUMENT_KIND, "force_stop");
+    /* Block revert while VM is running — paused/shut-off are OK
+     * (VIR_DOMAIN_SNAPSHOT_REVERT_FORCE handles them) */
     vm_info_t **vms = NULL;
     int vcount = 0;
     if (be->list_vms(&vms, &vcount) == 0) {
@@ -808,26 +779,11 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
                     be->free_vm_list(vms, vcount);
                     char *html = render_error(
                         "Cannot revert while VM is running. "
-                        "Please shut down the VM first.");
+                        "Please shut down or pause the VM first.");
                     enum MHD_Result ret = send_html_trigger(conn,
                         MHD_HTTP_BAD_REQUEST, html, "vmStateChanged");
                     free(html);
                     return ret;
-                }
-                if (vms[i]->state == VM_PAUSED) {
-                    if (force_stop && str_eq(force_stop, "1")) {
-                        /* Force-stop the paused VM before reverting */
-                        be->vm_force_stop(vm_name);
-                    } else {
-                        be->free_vm_list(vms, vcount);
-                        char *html = render_error(
-                            "VM is paused. Use the revert confirm dialog "
-                            "to stop and revert.");
-                        enum MHD_Result ret = send_html_trigger(conn,
-                            MHD_HTTP_BAD_REQUEST, html, "vmStateChanged");
-                        free(html);
-                        return ret;
-                    }
                 }
                 break;
             }
