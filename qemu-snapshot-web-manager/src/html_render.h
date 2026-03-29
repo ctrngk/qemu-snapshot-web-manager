@@ -19,7 +19,7 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap);
 
 /* Render the create-snapshot form (shown in modal or detail panel).
  * Returns malloc'd HTML string. */
-char *render_create_snapshot_form(const char *vm_name);
+char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2);
 
 /* Render the shared folders list.
  * Returns malloc'd HTML string. */

@@ -13,6 +13,10 @@ const char *lv_get_last_error(void);
  * on UEFI VMs). VM must be shut off. Returns 0=converted, 1=already qcow2, -1=error. */
 int lv_convert_nvram(const char *vm_name);
 
+/* Check if a VM's NVRAM is in qcow2 format.
+ * Returns: 1=qcow2, 0=not qcow2 (raw), -1=no NVRAM (not UEFI). */
+int lv_check_nvram_format(const char *vm_name);
+
 /* Enable shared memory (memoryBacking) on a VM for VirtioFS support.
  * Returns 0=enabled, -1=error. Idempotent if already enabled. */
 int lv_enable_shared_memory(const char *vm_name);

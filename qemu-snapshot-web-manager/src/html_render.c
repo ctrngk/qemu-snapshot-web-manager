@@ -353,7 +353,7 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
 /*  render_create_snapshot_form                                       */
 /* ------------------------------------------------------------------ */
 
-char *render_create_snapshot_form(const char *vm_name)
+char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
 {
     char *esc_vm = html_escape(vm_name);
 
@@ -363,6 +363,23 @@ char *render_create_snapshot_form(const char *vm_name)
     sb_append(&sb, "<div class=\"modal-overlay\" onclick=\"this.remove()\">\n");
     sb_append(&sb, "    <div class=\"modal\" onclick=\"event.stopPropagation()\">\n");
     sb_append(&sb, "        <h3>Create Snapshot</h3>\n");
+
+    /* NVRAM warning banner */
+    if (nvram_is_qcow2 == 0) {
+        sb_appendf(&sb,
+            "        <div class=\"alert alert-warning\" style=\"margin-bottom:0.75rem\">\n"
+            "            ⚠️ <strong>NVRAM is in raw format.</strong> "
+            "Internal snapshots require qcow2 NVRAM. "
+            "Stop the VM and "
+            "<a href=\"#\" onclick=\"event.preventDefault();"
+            "this.closest('.modal-overlay').remove();"
+            "htmx.ajax('POST','/api/vms/%s/convert-nvram',"
+            "{target:'#vm-notification',swap:'innerHTML'})\">"
+            "convert NVRAM</a> first, or use External type.\n"
+            "        </div>\n",
+            esc_vm);
+    }
+
     sb_appendf(&sb,
         "        <form hx-post=\"/api/vms/%s/snapshots\"\n"
         "              hx-target=\"#snapshot-tree\"\n"
@@ -384,9 +401,17 @@ char *render_create_snapshot_form(const char *vm_name)
         "            <div class=\"form-group\">\n"
         "                <label class=\"form-label\">Type</label>\n"
         "                <select class=\"form-select\" name=\"type\">\n"
-        "                    <option value=\"internal\">Internal (memory + disk state)</option>\n"
-        "                    <option value=\"external\">External (disk-only, requires merge)</option>\n"
+        "                    <option value=\"internal\">Internal</option>\n"
+        "                    <option value=\"external\">External</option>\n"
         "                </select>\n"
+        "                <p class=\"form-hint\">\n"
+        "                    <strong>Internal</strong> — saves full VM state "
+        "(memory + disk). Like VirtualBox &ldquo;save state&rdquo;. "
+        "Requires qcow2 NVRAM on UEFI VMs.<br>\n"
+        "                    <strong>External</strong> — disk-only snapshot. "
+        "Faster, but does not capture memory. "
+        "Must be merged later to reclaim space.\n"
+        "                </p>\n"
         "            </div>\n");
     sb_append(&sb,
         "            <div class=\"form-actions\">\n"
