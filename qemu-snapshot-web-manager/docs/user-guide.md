@@ -319,6 +319,17 @@ Your new snapshot will appear in the tree, connected to the previous snapshot.
 > keeps things simple — everything is stored in one place and you don't have to
 > worry about merging later.
 
+### Editing a Snapshot
+
+After creating a snapshot, you can change its description:
+
+1. Select the snapshot in the tree.
+2. In the detail panel, click the **✏️ Edit** button.
+3. A text area appears with the current description.
+4. Type your new description and click **💾 Save**, or click **✗ Cancel** to discard changes.
+
+> **Note:** Snapshot names cannot be changed — this is a libvirt limitation. Only the description can be edited.
+
 ### Viewing the Snapshot Tree
 
 The tree in the center panel shows the history of your snapshots and how they
@@ -344,6 +355,10 @@ You can navigate the tree:
 | Quick info | Hover over a snapshot |
 
 <!-- Screenshot: Snapshot tree with annotations pointing out green (current), gray (other), and dashed (external) nodes -->
+
+#### Switching tree labels
+
+By default, each snapshot node shows the creation date beneath its name. Click the **📅 Date** button in the toolbar above the tree to switch to showing descriptions instead. The button changes to **📝 Description** — click again to switch back. Your preference is remembered across page reloads.
 
 ### Reverting to a Snapshot
 
@@ -375,6 +390,15 @@ taken.
 > 💡 **Note:** You cannot revert while the VM is running. The confirmation
 > dialog will indicate when the VM has unsaved changes. If the VM is paused,
 > you can revert directly without needing to shut down first.
+
+#### What if you have unsaved changes?
+
+If your VM's current state has changed since the last snapshot (e.g., you installed software or modified files), QSWM detects this and shows you two options:
+
+- **💾 Save & Revert** — Automatically creates a backup snapshot (named `pre-revert-YYYYMMDD-HHMMSS`) before reverting. This way you can always go back if needed.
+- **↩ Revert Without Saving** — Discards all changes since the target snapshot. This cannot be undone.
+
+If your VM state matches the current snapshot exactly, the revert happens immediately without this prompt.
 
 <!-- Screenshot: Revert confirmation dialog -->
 
@@ -408,6 +432,8 @@ QSWM automatically scans for orphans:
 - When you select a VM (if it's shut off)
 - Every 5 minutes while the page is open
 - Whenever the VM state changes (e.g., after shutting down)
+
+> **Note:** Orphan scanning only runs when the VM is shut off — it needs direct access to the disk image files, which isn't possible while the VM is running.
 
 If orphans are found, a **yellow warning banner** appears above the snapshot
 tree showing how many were found. You can expand the list to see their names.
@@ -557,6 +583,8 @@ sudo systemctl enable --now qemu-guest-agent
 
 After installing, restart the VM or the agent service, and the Mount/Unmount buttons should work.
 
+> 💡 **Tip:** If you try to mount a folder without the guest agent installed, QSWM shows a helpful error with installation instructions specific to your guest OS — Fedora, Ubuntu, Arch, Alpine, Windows, FreeBSD, and more. Just follow the on-screen steps.
+
 ### Auto-Mount (VirtioFS only)
 
 Tired of clicking Mount every time you start your VM? The **Auto-Mount** feature
@@ -565,11 +593,17 @@ and mounts VirtioFS shared folders for you — no clicks needed after setup.
 
 #### What it does
 
-Auto-Mount installs a **systemd timer** in the guest VM that runs every 5 seconds.
-Each time it runs, it looks for any VirtioFS shares that aren't mounted yet and
-mounts them to `/media/<tag>` (where `<tag>` is the folder's mount tag). If a
-folder is already mounted, it skips it — so there's no harm in it running
-continuously.
+When you click the setup button, QSWM detects your guest operating system and installs the appropriate background service:
+
+| Guest OS | Service Type | Check Interval |
+|----------|-------------|----------------|
+| Linux (Fedora, Ubuntu, etc.) | systemd timer | Every 5 seconds |
+| Linux (Alpine, Gentoo) | OpenRC init script + cron | Every 1 minute |
+| Windows | PowerShell script + Scheduled Task | Every 5 minutes |
+| FreeBSD | rc.d service + cron | Every 1 minute |
+| macOS | launchd plist | Every 5 seconds |
+
+The service discovers VirtioFS shared folders and mounts them automatically to `/media/<tag>` (Linux/FreeBSD/macOS) or a drive letter (Windows).
 
 #### How to set it up
 
@@ -595,6 +629,7 @@ starts.
   button won't appear.
 - **Mount path is `/media/<tag>`.** Shares are mounted at `/media/` followed by
   the mount tag (e.g., a share tagged `projects` appears at `/media/projects`).
+- **Status indicator.** Once installed, the setup button changes to a green badge: **✓ Auto-Mount Active**. This confirms the service is running inside the guest.
 
 ### SELinux Note (Fedora / RHEL)
 
@@ -817,7 +852,7 @@ works on a wider range of setups.
 | **Mount tag** | A short label (like a name tag) that identifies a shared folder. The VM uses this tag to find and mount the folder. |
 | **Mount status** | Shows whether a shared folder is currently accessible inside the VM. "✓ Mounted" means the folder is active and accessible. "Not Mounted" means it's configured but not yet connected. |
 | **Detach** | Removes a shared folder configuration from a VM. Does NOT delete any files on the host. |
-| **Auto-Mount** | A background service (systemd timer) inside the guest VM that automatically discovers and mounts VirtioFS shared folders every 5 seconds. Set it up once and forget about it. |
+| **Auto-Mount** | A background service inside the guest VM that automatically discovers and mounts VirtioFS shared folders. Supports Linux (systemd/OpenRC), Windows (scheduled task), FreeBSD (rc.d), and macOS (launchd). Set it up once and forget about it. |
 
 ---
 
