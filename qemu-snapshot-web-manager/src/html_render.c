@@ -385,6 +385,7 @@ char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
         "        <form hx-post=\"/api/vms/%s/snapshots\"\n"
         "              hx-target=\"#snap-form-error\"\n"
         "              hx-swap=\"innerHTML\"\n"
+        "              hx-indicator=\"#snap-creating\"\n"
         "              hx-on::after-request=\"if(event.detail.successful) this.closest('.modal-overlay').remove()\">\n",
         esc_vm);
     sb_append(&sb,
@@ -416,9 +417,14 @@ char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
         "            </div>\n");
     sb_append(&sb,
         "            <div class=\"form-actions\">\n"
-        "                <button type=\"submit\" class=\"btn btn-primary\">Create</button>\n"
+        "                <button type=\"submit\" class=\"btn btn-primary\""
+        "                        id=\"snap-create-btn\">Create</button>\n"
         "                <button type=\"button\" class=\"btn btn-ghost\" \n"
         "                        onclick=\"this.closest('.modal-overlay').remove()\">Cancel</button>\n"
+        "            </div>\n"
+        "            <div id=\"snap-creating\" class=\"htmx-indicator snap-loading\">\n"
+        "                <span class=\"spinner\"></span> Creating snapshot\xe2\x80\xa6 "
+        "This may take a moment for running VMs.\n"
         "            </div>\n");
     sb_append(&sb, "        </form>\n");
     sb_append(&sb, "    </div>\n");
