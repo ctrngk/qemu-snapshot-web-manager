@@ -836,3 +836,92 @@ char *render_orphan_warning(const char *vm_name, char **orphan_names, int count)
     free(esc_vm);
     return sb_finish(&sb);
 }
+
+/* ------------------------------------------------------------------ */
+/*  render_guest_agent_help                                           */
+/* ------------------------------------------------------------------ */
+
+char *render_guest_agent_help(const char *operation, const char *detail)
+{
+    strbuf_t sb;
+    sb_init(&sb, 4096);
+
+    char *esc_op = html_escape(operation);
+    char *esc_detail = detail ? html_escape(detail) : NULL;
+
+    sb_append(&sb,
+        "<div class=\"alert alert-error\">\n"
+        "  <strong>\xe2\x9c\x97 ");
+    sb_appendf(&sb, "Failed to %s</strong>", esc_op);
+
+    if (esc_detail) {
+        sb_appendf(&sb, "<br><code style=\"font-size:0.85em\">%s</code>", esc_detail);
+    }
+
+    sb_append(&sb,
+        "<br><br>"
+        "  This feature uses the <strong>QEMU Guest Agent</strong> to run commands "
+        "inside the VM. The guest agent must be installed and running in the guest OS.\n"
+        "  <br><br>\n"
+        "  <details open>\n"
+        "    <summary><strong>\xf0\x9f\x90\xa7 Linux</strong></summary>\n"
+        "    <div style=\"padding:8px 0 4px 16px\">\n"
+        "      <details>\n"
+        "        <summary>Fedora / RHEL / CentOS</summary>\n"
+        "        <pre style=\"margin:4px 0\">sudo dnf install qemu-guest-agent\n"
+        "sudo systemctl enable --now qemu-guest-agent</pre>\n"
+        "      </details>\n"
+        "      <details>\n"
+        "        <summary>Ubuntu / Debian</summary>\n"
+        "        <pre style=\"margin:4px 0\">sudo apt install qemu-guest-agent\n"
+        "sudo systemctl enable --now qemu-guest-agent</pre>\n"
+        "      </details>\n"
+        "      <details>\n"
+        "        <summary>Arch Linux</summary>\n"
+        "        <pre style=\"margin:4px 0\">sudo pacman -S qemu-guest-agent\n"
+        "sudo systemctl enable --now qemu-guest-agent</pre>\n"
+        "      </details>\n"
+        "      <details>\n"
+        "        <summary>Alpine Linux</summary>\n"
+        "        <pre style=\"margin:4px 0\">apk add qemu-guest-agent\n"
+        "rc-update add qemu-guest-agent\n"
+        "rc-service qemu-guest-agent start</pre>\n"
+        "      </details>\n"
+        "      <details>\n"
+        "        <summary>openSUSE</summary>\n"
+        "        <pre style=\"margin:4px 0\">sudo zypper install qemu-guest-agent\n"
+        "sudo systemctl enable --now qemu-guest-agent</pre>\n"
+        "      </details>\n"
+        "    </div>\n"
+        "  </details>\n"
+        "  <details>\n"
+        "    <summary><strong>\xf0\x9f\xaa\x9f Windows</strong></summary>\n"
+        "    <div style=\"padding:8px 0 4px 16px\">\n"
+        "      Download and install the <a href=\"https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/\" "
+        "target=\"_blank\">VirtIO guest tools (virtio-win)</a>.<br>\n"
+        "      The QEMU Guest Agent is included in the installer.\n"
+        "    </div>\n"
+        "  </details>\n"
+        "  <details>\n"
+        "    <summary><strong>\xf0\x9f\x98\x88 FreeBSD</strong></summary>\n"
+        "    <div style=\"padding:8px 0 4px 16px\">\n"
+        "      <pre style=\"margin:4px 0\">pkg install qemu-guest-agent\n"
+        "sysrc qemu_guest_agent_enable=YES\n"
+        "service qemu-guest-agent start</pre>\n"
+        "    </div>\n"
+        "  </details>\n"
+        "  <br>\n"
+        "  <details>\n"
+        "    <summary><strong>\xf0\x9f\x94\x92 SELinux issue?</strong> (Fedora/RHEL)</summary>\n"
+        "    <div style=\"padding:8px 0 4px 16px\">\n"
+        "      If the agent is installed but operations still fail, SELinux may be blocking it:\n"
+        "      <pre style=\"margin:4px 0\">sudo semanage permissive -a virt_qemu_ga_t</pre>\n"
+        "      Requires: <code>sudo dnf install policycoreutils-python-utils</code>\n"
+        "    </div>\n"
+        "  </details>\n"
+        "</div>\n");
+
+    free(esc_op);
+    free(esc_detail);
+    return sb_finish(&sb);
+}
