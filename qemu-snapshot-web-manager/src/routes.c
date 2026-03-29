@@ -666,7 +666,7 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
 
     char *esc_vm   = html_escape(vm_name);
     char *esc_snap = html_escape(snap_name);
-    char html[4096];
+    char html[6144];
 
     if (is_running) {
         /* VM is running — must be stopped first */
@@ -694,7 +694,8 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "    <button class=\"btn btn-primary\"\n"
             "            hx-post=\"/api/vms/%s/snapshots/%s/revert?force_stop=1\"\n"
             "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\">\n"
+            "            hx-swap=\"innerHTML\"\n"
+            "            hx-indicator=\"#revert-loading\">\n"
             "      \xe2\x8f\xb9 Stop &amp; Revert\n"
             "    </button>\n"
             "    <button class=\"btn btn-ghost\"\n"
@@ -703,6 +704,9 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "            hx-swap=\"innerHTML\">\n"
             "      Cancel\n"
             "    </button>\n"
+            "  </div>\n"
+            "  <div id=\"revert-loading\" class=\"htmx-indicator snap-action-busy\">\n"
+            "    <span class=\"spinner\"></span> Reverting\xe2\x80\xa6\n"
             "  </div>\n"
             "</div>\n",
             esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
@@ -717,13 +721,15 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "    <button class=\"btn btn-primary\"\n"
             "            hx-post=\"/api/vms/%s/snapshots/%s/revert?save_current=1\"\n"
             "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\">\n"
+            "            hx-swap=\"innerHTML\"\n"
+            "            hx-indicator=\"#revert-loading\">\n"
             "      \xf0\x9f\x92\xbe Save &amp; Revert\n"
             "    </button>\n"
             "    <button class=\"btn btn-danger\"\n"
             "            hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
             "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\">\n"
+            "            hx-swap=\"innerHTML\"\n"
+            "            hx-indicator=\"#revert-loading\">\n"
             "      \xe2\x86\xa9 Revert Without Saving\n"
             "    </button>\n"
             "    <button class=\"btn btn-ghost\"\n"
@@ -732,6 +738,9 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "            hx-swap=\"innerHTML\">\n"
             "      Cancel\n"
             "    </button>\n"
+            "  </div>\n"
+            "  <div id=\"revert-loading\" class=\"htmx-indicator snap-action-busy\">\n"
+            "    <span class=\"spinner\"></span> Reverting\xe2\x80\xa6\n"
             "  </div>\n"
             "</div>\n",
             esc_vm, esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);
@@ -745,7 +754,8 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "    <button class=\"btn btn-primary\"\n"
             "            hx-post=\"/api/vms/%s/snapshots/%s/revert\"\n"
             "            hx-target=\"#snapshot-detail\"\n"
-            "            hx-swap=\"innerHTML\">\n"
+            "            hx-swap=\"innerHTML\"\n"
+            "            hx-indicator=\"#revert-loading\">\n"
             "      \xe2\x86\xa9 Revert\n"
             "    </button>\n"
             "    <button class=\"btn btn-ghost\"\n"
@@ -754,6 +764,9 @@ static enum MHD_Result handle_revert_confirm(struct MHD_Connection *conn,
             "            hx-swap=\"innerHTML\">\n"
             "      Cancel\n"
             "    </button>\n"
+            "  </div>\n"
+            "  <div id=\"revert-loading\" class=\"htmx-indicator snap-action-busy\">\n"
+            "    <span class=\"spinner\"></span> Reverting\xe2\x80\xa6\n"
             "  </div>\n"
             "</div>\n",
             esc_snap, esc_vm, esc_snap, esc_vm, esc_snap);

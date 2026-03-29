@@ -1179,6 +1179,14 @@ textarea.form-input {
     color: var(--text-secondary);
 }
 
+.snap-action-busy {
+    margin-top: 0.5rem;
+    padding: 0.4rem 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
 /* ===== Directory Browser ===== */
 .dir-browser {
     max-height: 400px;
