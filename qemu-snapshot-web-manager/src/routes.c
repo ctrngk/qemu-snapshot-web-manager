@@ -1226,20 +1226,27 @@ static enum MHD_Result handle_mount_shared_folder(struct MHD_Connection *conn,
         be->free_shared_folders(folders, count);
 
     if (rc != 0) {
-        char *html = render_error_html(
-            "Failed to mount shared folder inside guest.<br><br>"
-            "<strong>Common causes:</strong><br>"
-            "• VM is not running<br>"
-            "• <code>qemu-guest-agent</code> is not installed in the VM<br>"
-            "• <strong>SELinux</strong> blocks mount from guest agent context (Fedora/RHEL)<br><br>"
-            "<strong>Fix SELinux (run inside the VM):</strong><br>"
-            "<code>sudo semanage permissive -a virt_qemu_ga_t</code><br><br>"
-            "<strong>Install guest agent:</strong><br>"
-            "<code>Fedora/RHEL:</code> sudo dnf install qemu-guest-agent<br>"
-            "<code>Debian/Ubuntu:</code> sudo apt install qemu-guest-agent<br>"
-            "<code>Arch:</code> sudo pacman -S qemu-guest-agent<br>"
-            "<code>Alpine:</code> apk add qemu-guest-agent"
-        );
+        /* Check if this is a guest-agent error */
+        const char *err = lv_get_last_error();
+        int is_ga_error = (err && (strstr(err, "guest agent") ||
+                                    strstr(err, "Guest agent") ||
+                                    strstr(err, "QEMU guest agent") ||
+                                    strstr(err, "not connected") ||
+                                    strstr(err, "not responding")));
+        char *html;
+        if (is_ga_error) {
+            html = render_guest_agent_help("mount shared folder", err);
+        } else {
+            html = render_error_html(
+                "Failed to mount shared folder inside guest.<br><br>"
+                "<strong>Common causes:</strong><br>"
+                "\xe2\x80\xa2 VM is not running<br>"
+                "\xe2\x80\xa2 <code>qemu-guest-agent</code> is not installed in the VM<br>"
+                "\xe2\x80\xa2 <strong>SELinux</strong> blocks mount from guest agent context (Fedora/RHEL)<br><br>"
+                "<strong>Fix SELinux (run inside the VM):</strong><br>"
+                "<code>sudo semanage permissive -a virt_qemu_ga_t</code>"
+            );
+        }
         enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
         free(html);
         return ret;
@@ -1267,15 +1274,26 @@ static enum MHD_Result handle_unmount_shared_folder(struct MHD_Connection *conn,
 
     int rc = be->unmount_shared_folder(vm_name, mount_tag);
     if (rc != 0) {
-        char *html = render_error_html(
-            "Failed to unmount shared folder inside guest.<br><br>"
-            "<strong>Common causes:</strong><br>"
-            "• Folder is not currently mounted<br>"
-            "• VM is not running or guest agent unavailable<br>"
-            "• <strong>SELinux</strong> blocks umount from guest agent context<br><br>"
-            "<strong>Fix SELinux (run inside the VM):</strong><br>"
-            "<code>sudo semanage permissive -a virt_qemu_ga_t</code>"
-        );
+        const char *err = lv_get_last_error();
+        int is_ga_error = (err && (strstr(err, "guest agent") ||
+                                    strstr(err, "Guest agent") ||
+                                    strstr(err, "QEMU guest agent") ||
+                                    strstr(err, "not connected") ||
+                                    strstr(err, "not responding")));
+        char *html;
+        if (is_ga_error) {
+            html = render_guest_agent_help("unmount shared folder", err);
+        } else {
+            html = render_error_html(
+                "Failed to unmount shared folder inside guest.<br><br>"
+                "<strong>Common causes:</strong><br>"
+                "\xe2\x80\xa2 Folder is not currently mounted<br>"
+                "\xe2\x80\xa2 VM is not running or guest agent unavailable<br>"
+                "\xe2\x80\xa2 <strong>SELinux</strong> blocks umount from guest agent context<br><br>"
+                "<strong>Fix SELinux (run inside the VM):</strong><br>"
+                "<code>sudo semanage permissive -a virt_qemu_ga_t</code>"
+            );
+        }
         enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
         free(html);
         return ret;
@@ -1314,7 +1332,18 @@ static enum MHD_Result handle_automount_setup(struct MHD_Connection *conn,
     char *msg = NULL;
     int rc = be->setup_automount(vm_name, &msg);
     if (rc != 0) {
-        char *html = render_error(msg ? msg : "Failed to setup auto-mount");
+        const char *err_detail = msg ? msg : lv_get_last_error();
+        int is_ga_error = (err_detail && (strstr(err_detail, "guest agent") ||
+                                           strstr(err_detail, "Guest agent") ||
+                                           strstr(err_detail, "QEMU guest agent") ||
+                                           strstr(err_detail, "not connected") ||
+                                           strstr(err_detail, "not responding")));
+        char *html;
+        if (is_ga_error) {
+            html = render_guest_agent_help("setup auto-mount", err_detail);
+        } else {
+            html = render_error(err_detail ? err_detail : "Failed to setup auto-mount");
+        }
         /* Don't trigger sharedFoldersChanged on error — that would reload the
          * panel and wipe out this error message before the user can read it. */
         enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);

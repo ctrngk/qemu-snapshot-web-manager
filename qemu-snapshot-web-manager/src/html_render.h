@@ -49,4 +49,10 @@ char *render_directory_listing(const char *current_path, char **entries, int cou
  * Returns malloc'd HTML string (empty string if no orphans). */
 char *render_orphan_warning(const char *vm_name, char **orphan_names, int count);
 
+/* Render guest-agent help message with OS-specific install instructions.
+ * operation is the action that failed (e.g., "mount", "unmount", "auto-mount setup").
+ * detail is the specific error from libvirt (may be NULL).
+ * Returns malloc'd HTML string. */
+char *render_guest_agent_help(const char *operation, const char *detail);
+
 #endif

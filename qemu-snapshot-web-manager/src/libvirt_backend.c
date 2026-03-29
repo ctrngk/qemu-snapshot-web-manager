@@ -1429,6 +1429,7 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
     if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
         virDomainFree(dom);
         log_msg(LOG_ERROR, "VM %s is not running — cannot mount via guest agent", vm_name);
+        snprintf(lv_last_error, sizeof(lv_last_error), "VM is not running");
         return -1;
     }
 
@@ -1449,6 +1450,7 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
     int ret = guest_exec(dom, cmd, &msg);
     if (ret != 0) {
         log_msg(LOG_ERROR, "Mount in guest failed: %s", msg ? msg : "unknown error");
+        if (msg) snprintf(lv_last_error, sizeof(lv_last_error), "%s", msg);
     } else {
         log_msg(LOG_INFO, "Mounted %s at /media/%s in guest %s", mount_tag, mount_tag, vm_name);
     }
@@ -1468,6 +1470,7 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
     if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
         virDomainFree(dom);
         log_msg(LOG_ERROR, "VM %s is not running — cannot unmount via guest agent", vm_name);
+        snprintf(lv_last_error, sizeof(lv_last_error), "VM is not running");
         return -1;
     }
 
@@ -1478,6 +1481,7 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
     int ret = guest_exec(dom, cmd, &msg);
     if (ret != 0) {
         log_msg(LOG_ERROR, "Unmount in guest failed: %s", msg ? msg : "unknown error");
+        if (msg) snprintf(lv_last_error, sizeof(lv_last_error), "%s", msg);
     } else {
         log_msg(LOG_INFO, "Unmounted /media/%s in guest %s", mount_tag, vm_name);
     }
