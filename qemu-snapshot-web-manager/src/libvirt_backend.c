@@ -457,6 +457,35 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
  * VM MUST be shut off before calling this.
  * Returns: 0 = converted, 1 = already qcow2, -1 = error.
  */
+
+/* Check if a VM's NVRAM is in qcow2 format.
+ * Returns: 1 = qcow2, 0 = not qcow2 (raw), -1 = no NVRAM (not UEFI). */
+int lv_check_nvram_format(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return -1;
+    conn_unlock();
+
+    char *dom_xml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
+    virDomainFree(dom);
+    if (!dom_xml) return -1;
+
+    char *nvram_path = extract_xml_content_ext(dom_xml, "nvram");
+    if (!nvram_path || strlen(nvram_path) == 0) {
+        free(nvram_path);
+        free(dom_xml);
+        return -1;  /* no NVRAM = not a UEFI VM */
+    }
+    free(nvram_path);
+
+    char *fmt = extract_xml_attr(dom_xml, "nvram", "format");
+    free(dom_xml);
+
+    int result = (fmt && str_eq(fmt, "qcow2")) ? 1 : 0;
+    free(fmt);
+    return result;
+}
+
 int lv_convert_nvram(const char *vm_name)
 {
     virDomainPtr dom = lv_lookup_domain_locked(vm_name);

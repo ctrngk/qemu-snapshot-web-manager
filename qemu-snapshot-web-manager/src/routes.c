@@ -876,7 +876,8 @@ static enum MHD_Result handle_shared_folders(struct MHD_Connection *conn,
 static enum MHD_Result handle_snapshot_form(struct MHD_Connection *conn,
                                             const char *vm_name)
 {
-    char *html = render_create_snapshot_form(vm_name);
+    int nvram_ok = lv_check_nvram_format(vm_name);
+    char *html = render_create_snapshot_form(vm_name, nvram_ok);
     enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
     free(html);
     return ret;
