@@ -400,12 +400,29 @@ function onNodeClick(event, snap) {
     d3.selectAll('.node-circle').classed('selected', false);
     d3.select(event.currentTarget).classed('selected', true);
 
+    // Disable Start button if a non-current snapshot is selected
+    updateStartButton(snap.data.isCurrent);
+
     // Load snapshot detail via HTMX
     if (window.currentVm && snap.data.id) {
         htmx.ajax('GET',
             '/api/vms/' + window.currentVm + '/snapshots/' + snap.data.id,
             { target: '#snapshot-detail', swap: 'innerHTML' }
         );
+    }
+}
+
+/* Enable/disable the VM Start button based on snapshot selection.
+ * Start only makes sense when viewing the current snapshot. */
+function updateStartButton(isCurrentSnap) {
+    var btn = document.getElementById('btn-vm-start');
+    if (!btn) return;
+    if (isCurrentSnap) {
+        btn.disabled = false;
+        btn.title = 'Start VM';
+    } else {
+        btn.disabled = true;
+        btn.title = 'Revert to this snapshot first before starting';
     }
 }
 
