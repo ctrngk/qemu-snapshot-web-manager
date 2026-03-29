@@ -292,7 +292,8 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
         "    <button class=\"btn btn-sm btn-secondary edit-desc-btn\"\n"
         "            hx-get=\"/api/vms/%s/snapshots/%s/edit\"\n"
         "            hx-target=\"#snapshot-detail\"\n"
-        "            hx-swap=\"innerHTML\">\n"
+        "            hx-swap=\"innerHTML\"\n"
+        "            hx-indicator=\"#snap-action-loading\">\n"
         "        \xe2\x9c\x8f Edit Description\n"
         "    </button>\n",
         esc_vm, esc_id);
@@ -309,7 +310,8 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
         "        <button class=\"btn btn-primary\"\n"
         "                hx-get=\"/api/vms/%s/snapshots/%s/revert-confirm\"\n"
         "                hx-target=\"#snapshot-detail\"\n"
-        "                hx-swap=\"innerHTML\">\n"
+        "                hx-swap=\"innerHTML\"\n"
+        "                hx-indicator=\"#snap-action-loading\">\n"
         "            \xe2\x86\xa9 Revert\n"
         "        </button>\n",
         esc_vm, esc_id);
@@ -320,6 +322,7 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
         "                hx-delete=\"/api/vms/%s/snapshots/%s\"\n"
         "                hx-target=\"#snapshot-tree\"\n"
         "                hx-swap=\"innerHTML\"\n"
+        "                hx-indicator=\"#snap-action-loading\"\n"
         "                hx-confirm=\"Delete snapshot '%s'?\">\n"
         "            \xf0\x9f\x97\x91 Delete\n"
         "        </button>\n",
@@ -332,6 +335,7 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
             "                hx-post=\"/api/vms/%s/snapshots/%s/merge\"\n"
             "                hx-target=\"#snapshot-tree\"\n"
             "                hx-swap=\"innerHTML\"\n"
+            "                hx-indicator=\"#snap-action-loading\"\n"
             "                hx-confirm=\"Merge snapshot '%s'?\">\n"
             "            \xe2\x8a\x95 Merge\n"
             "        </button>\n",
@@ -339,6 +343,13 @@ char *render_snapshot_detail(const char *vm_name, snapshot_node_t *snap)
     }
 
     sb_append(&sb, "    </div>\n");
+
+    /* Loading indicator for action buttons */
+    sb_append(&sb,
+        "    <div id=\"snap-action-loading\" class=\"htmx-indicator snap-action-busy\">\n"
+        "        <span class=\"spinner\"></span> Processing\xe2\x80\xa6\n"
+        "    </div>\n");
+
     sb_append(&sb, "</div>\n");
 
     free(esc_vm);
