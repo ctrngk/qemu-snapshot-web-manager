@@ -1135,7 +1135,7 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
         free(source_dir); free(mount_tag); free(fs_type); free(ro_str);
         free(confirm_sm);
 
-        char *html = render_error(msg);
+        char *html = render_error_html(msg);
         enum MHD_Result ret = send_html(conn, MHD_HTTP_OK, html);
         free(html);
         return ret;
