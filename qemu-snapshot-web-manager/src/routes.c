@@ -69,19 +69,26 @@ static void vm_mark_dirty(const char *name)
 /* Returns 1 if VM state has diverged from last snapshot. */
 static int vm_is_dirty(const char *name, vm_state_t state)
 {
-    /* Running/paused VMs are always dirty — actively accumulating changes */
-    if (state == VM_RUNNING || state == VM_PAUSED) {
+    /* Running VMs are always dirty — actively accumulating changes */
+    if (state == VM_RUNNING) {
         vm_mark_dirty(name);
         return 1;
     }
 
-    /* Shut-off VM: check tracking table */
+    /* Paused and shut-off VMs: check tracking table.
+     * Paused VMs are not accumulating changes, so respect clean markers
+     * (e.g., right after taking a snapshot while paused). */
     for (int i = 0; i < vm_dirty_count; i++) {
         if (strcmp(vm_dirty_table[i].name, name) == 0)
             return !vm_dirty_table[i].is_clean;
     }
 
-    /* Not in table + shut off → assume clean (never started since server boot) */
+    /* Not in table: paused VMs are dirty (state diverged from last snapshot),
+     * shut-off VMs are clean (never started since server boot) */
+    if (state == VM_PAUSED) {
+        vm_mark_dirty(name);
+        return 1;
+    }
     return 0;
 }
 
