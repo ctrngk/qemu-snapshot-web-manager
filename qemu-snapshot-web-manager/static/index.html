@@ -198,20 +198,10 @@
                     var sel = document.querySelector('.vm-item[data-vm="' + window.currentVm + '"]');
                     if (sel) sel.classList.add('active');
                 }
-                /* Re-apply Start button state if a non-current snapshot is selected */
-                if (typeof _selectedSnapId !== 'undefined' && _selectedSnapId !== null) {
-                    var isCurrent = false;
-                    /* Check if selected snapshot is the current one */
-                    var currentNode = document.querySelector('.node-circle.current');
-                    if (currentNode) {
-                        var nodeData = d3.select(currentNode).datum();
-                        if (nodeData && nodeData.data && nodeData.data.id === _selectedSnapId) {
-                            isCurrent = true;
-                        }
-                    }
-                    if (typeof updateStartButton === 'function') {
-                        updateStartButton(isCurrent);
-                    }
+                /* Re-apply Start button state if a snapshot is selected */
+                if (typeof _selectedSnapId !== 'undefined' && _selectedSnapId !== null
+                    && typeof updateStartButton === 'function') {
+                    updateStartButton(_selectedIsCurrent);
                 }
                 /* Detect VM state changes and trigger tree refresh */
                 var newHtml = evt.detail.target.innerHTML;
