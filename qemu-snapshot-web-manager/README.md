@@ -10,13 +10,18 @@
 
 - **Visual snapshot tree** — interactive D3.js tree visualization, similar to VirtualBox's snapshot view
 - **Internal & external snapshot management** — create, delete, revert, and merge snapshots
+- **Snapshot description editing** — modify snapshot descriptions after creation, toggle tree labels between dates and descriptions
 - **Auto-merge for external snapshots** — block commit support to flatten snapshot chains
+- **Orphan snapshot detection** — scans for leftover qcow2 internal snapshots after metadata-only deletes, with one-click cleanup
+- **Smart revert** — detects unsaved VM state changes and offers "Save & Revert" (auto-creates backup snapshot) or "Revert Without Saving"
+- **NVRAM auto-conversion** — automatically converts raw UEFI NVRAM files to qcow2 format when needed for internal snapshots
 - **Shared folder management** — list (virtiofs + 9p), add, detach, mount/unmount via guest agent, real-time mount status detection, server-side directory browser for selecting source paths
-- **Auto-mount for VirtioFS shares** — one-click setup installs a systemd timer in the guest VM that automatically discovers and mounts VirtioFS shared folders to `/media/<tag>`
-- **Guest agent integration** — mount and unmount shared folders inside VMs through QEMU guest agent
-- **VM lifecycle controls** — start, stop, and pause virtual machines
-- **Real-time status updates** — keeps the UI in sync with VM state
-- **Linux-focused** — Linux (libvirt/KVM) with experimental macOS support (libvirt/HVF)
+- **Cross-OS auto-mount** — one-click setup detects guest OS and installs the appropriate service: systemd timer (Linux), OpenRC init script (Alpine), scheduled task (Windows), rc.d service (FreeBSD), or launchd plist (macOS)
+- **Guest agent integration** — mount and unmount shared folders inside VMs through QEMU guest agent, with OS-specific installation help when the agent is missing
+- **VM lifecycle controls** — start, stop, pause, resume, and force-stop virtual machines
+- **Dirty state tracking** — warns when VM state has diverged from the last snapshot before reverting
+- **Real-time status updates** — keeps the UI in sync with VM state changes
+- **Cross-platform guest support** — detects guest OS automatically; Linux host (libvirt/KVM) with experimental macOS host support (libvirt/HVF)
 - **Zero JS toolchain** — no npm, no node, no build step — just C and a browser
 - **Tiny footprint** — single ~100KB binary, 14KB of HTMX + D3 loaded from CDN
 
@@ -141,20 +146,28 @@ The interface uses a three-panel layout:
 | `POST` | `/api/vms/{name}/start` | Start VM |
 | `POST` | `/api/vms/{name}/stop` | Stop VM |
 | `POST` | `/api/vms/{name}/pause` | Pause VM |
+| `POST` | `/api/vms/{name}/resume` | Resume paused VM |
+| `POST` | `/api/vms/{name}/force-stop` | Force-stop VM (destroy) |
+| `POST` | `/api/vms/{name}/convert-nvram` | Convert UEFI NVRAM to qcow2 format |
 | `GET` | `/api/vms/{name}/snapshots` | Snapshot tree (JSON) |
 | `GET` | `/api/vms/{name}/snapshots/{snap}` | Snapshot detail (HTML) |
+| `GET` | `/api/vms/{name}/snapshots/{snap}/edit` | Edit snapshot form (HTML) |
+| `PUT` | `/api/vms/{name}/snapshots/{snap}` | Update snapshot description |
+| `GET` | `/api/vms/{name}/snapshots/{snap}/revert-confirm` | Revert confirmation dialog (HTML) |
 | `GET` | `/api/vms/{name}/snapshots/form` | Create snapshot form (HTML) |
 | `POST` | `/api/vms/{name}/snapshots` | Create snapshot |
 | `DELETE` | `/api/vms/{name}/snapshots/{snap}` | Delete snapshot |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/revert` | Revert to snapshot |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/merge` | Merge external snapshot |
+| `GET` | `/api/vms/{name}/orphan-check` | Scan for orphan qcow2 snapshots (HTML) |
+| `POST` | `/api/vms/{name}/orphan-cleanup` | Remove orphan qcow2 snapshots |
 | `GET` | `/api/vms/{name}/shared-folders` | List shared folders (HTML) |
 | `GET` | `/api/vms/{name}/shared-folders/form` | Add shared folder form (HTML) |
 | `POST` | `/api/vms/{name}/shared-folders` | Add shared folder |
 | `DELETE` | `/api/vms/{name}/shared-folders/{tag}` | Detach shared folder |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/mount` | Mount inside guest VM |
 | `POST` | `/api/vms/{name}/shared-folders/{tag}/unmount` | Unmount inside guest VM |
-| `POST` | `/api/vms/{name}/shared-folders/automount` | Install auto-mount timer in guest VM |
+| `POST` | `/api/vms/{name}/shared-folders/automount` | Install auto-mount service in guest VM |
 | `GET` | `/api/browse?path=...` | Server-side directory browser (HTML) |
 
 ## Known Limitations
@@ -164,7 +177,7 @@ The interface uses a three-panel layout:
 - **No WebSocket** — UI updates are polling-based, not push-based
 - **Single-disk assumption** — external snapshot merge (block commit) assumes VMs have a single disk
 - **Requires root** — `qemu:///system` connections require root privileges
-- **Guest agent required** — shared folder mount/unmount requires QEMU guest agent installed in the VM
+- **Guest agent required** — shared folder mount/unmount and auto-mount require QEMU guest agent installed in the VM; the UI shows OS-specific install instructions when the agent is missing
 
 ## Development
 
