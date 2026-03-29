@@ -32,6 +32,7 @@ Browser (HTMX + D3.js)
 |---------|---------|---------|
 | [libmicrohttpd](https://www.gnu.org/software/libmicrohttpd/) | 1.0.x | HTTP server (note: 1.0.x API, not the older 0.9.x — different types and constants) |
 | [libvirt](https://libvirt.org/) | any | VM and snapshot management via the libvirt C API |
+| libvirt-qemu (same package) | any | Guest agent commands via `virDomainQemuAgentCommand()` |
 | [jansson](https://github.com/akheron/jansson) | any | JSON serialization for snapshot tree data |
 | [HTMX](https://htmx.org/) | 1.9.12 | HTML-over-the-wire frontend interactivity (CDN) |
 | [D3.js](https://d3js.org/) | v7 | Snapshot tree visualization (CDN) |
@@ -166,7 +167,13 @@ Browser
 
 ### Thread Safety
 
-libmicrohttpd is configured with `MHD_USE_THREAD_PER_CONNECTION` — each HTTP request runs in its own OS thread. This requires careful synchronization of shared state.
+libmicrohttpd is configured with `MHD_USE_INTERNAL_POLLING_THREAD` — requests are processed sequentially in MHD's internal thread. This avoids the need for per-request thread synchronization and is appropriate for a single-user local management UI.
+
+> **History:** An earlier version used `MHD_USE_THREAD_PER_CONNECTION` (one OS thread per request). This caused crashes under concurrent requests because the shared `virConnectPtr` was accessed from multiple threads simultaneously. The mutex-based locking below was added as a defense-in-depth measure and remains in the code, but the single-threaded MHD configuration is what prevents concurrency issues in practice.
+
+### Signal Handling
+
+The server ignores `SIGPIPE` signals (`signal(SIGPIPE, SIG_IGN)` in `main.c`). Without this, the process crashes when writing a response to a client that has already closed the connection — a common occurrence with HTMX polling and browser tab closes.
 
 **Connection mutex:**
 
@@ -362,6 +369,7 @@ typedef struct {
 | `render_success()` | `<div class="alert alert-success">` message |
 | `render_error()` | `<div class="alert alert-error">` message |
 | `render_error_html()` | Rich HTML error message with structured details, SELinux fix instructions, and distro-specific install commands |
+| `render_guest_agent_help()` | Expandable OS-specific guest agent installation instructions (Fedora, Ubuntu, Arch, Alpine, Windows, FreeBSD) — shown when mount/unmount fails due to missing agent |
 
 HTMX attributes (`hx-get`, `hx-post`, `hx-delete`, `hx-target`, `hx-swap`, `hx-confirm`) are embedded directly in the rendered HTML.
 
@@ -488,6 +496,9 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `POST` | `/api/vms/{name}/pause` | — | HTML success/error | HX-Trigger: `vmStateChanged` |
 | `GET` | `/api/vms/{name}/snapshots` | — | JSON (snapshot tree) | Consumed by D3.js in `tree.js` |
 | `GET` | `/api/vms/{name}/snapshots/{snap}` | — | HTML fragment | Snapshot detail panel |
+| `GET` | `/api/vms/{name}/snapshots/{snap}/edit` | — | HTML fragment | Edit snapshot description form |
+| `PUT` | `/api/vms/{name}/snapshots/{snap}` | URL-encoded: `description` | HTML fragment | Update snapshot description; returns updated detail panel |
+| `GET` | `/api/vms/{name}/snapshots/{snap}/revert-confirm` | — | HTML fragment | Revert confirmation dialog with dirty-state detection; shows Save & Revert option if VM state has diverged |
 | `GET` | `/api/vms/{name}/snapshots/form` | — | HTML fragment | Create snapshot form modal |
 | `POST` | `/api/vms/{name}/snapshots` | URL-encoded: `name`, `description`, `type` | HTML success/error | HX-Trigger: `vmStateChanged` |
 | `DELETE` | `/api/vms/{name}/snapshots/{snap}` | — | HTML success/error | Blocked while VM running/paused; detects internal vs external type |
@@ -505,7 +516,7 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `POST` | `/api/vms/{name}/resume` | — | HTML success/error | Resume paused VM (`virDomainResume`); HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/force-stop` | — | HTML success/error | Force stop VM (`virDomainDestroy`); HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/convert-nvram` | — | HTML success/error | Convert NVRAM raw→qcow2 for internal snapshot support |
-| `POST` | `/api/vms/{name}/shared-folders/automount` | — | HTML success/error | Install auto-mount systemd timer in guest; HX-Trigger: `sharedFoldersChanged` |
+| `POST` | `/api/vms/{name}/shared-folders/automount` | — | HTML success/error | Detect guest OS and install appropriate auto-mount service; HX-Trigger: `sharedFoldersChanged` |
 
 `{name}` is the VM name (URL-decoded). `{snap}` is the snapshot ID (URL-decoded).
 
@@ -684,7 +695,35 @@ for (int attempt = 0; attempt < 10; attempt++) {
 
 ### Auto-Mount System
 
-The auto-mount feature installs three files inside the guest VM via `guest_exec()`:
+The auto-mount feature detects the guest OS and installs the appropriate background service via `guest_exec()`. The main entry point is `lv_setup_automount()`, which calls `detect_guest_os()` and dispatches to an OS-specific setup function.
+
+#### Guest OS Detection (`detect_guest_os()`)
+
+Uses a two-stage strategy:
+
+1. **Primary:** Send `guest-get-osinfo` QGA command (available in QEMU GA 2.10+). Parses the JSON response for `name`, `id`, and `kernel-release` fields to identify Windows, macOS, FreeBSD, or Linux.
+2. **Fallback:** If `guest-get-osinfo` is unavailable, probe for OS-specific binaries via `guest_exec()`:
+   - `cmd.exe /c echo ok` → Windows
+   - `freebsd-version` → FreeBSD
+   - `sw_vers` → macOS
+   - `systemctl --version` → Linux (systemd)
+   - `rc-service --version` → Linux (OpenRC)
+
+Returns a `guest_os_t` enum: `GUEST_OS_LINUX_SYSTEMD`, `GUEST_OS_LINUX_OPENRC`, `GUEST_OS_LINUX_OTHER`, `GUEST_OS_WINDOWS`, `GUEST_OS_FREEBSD`, `GUEST_OS_MACOS`, `GUEST_OS_UNKNOWN`.
+
+#### OS-Specific Setup Functions
+
+| Function | Guest OS | Service Mechanism |
+|----------|----------|-------------------|
+| `setup_automount_systemd()` | Linux (Fedora, Ubuntu, etc.) | systemd timer (5s interval) + service unit + bash script |
+| `setup_automount_openrc()` | Linux (Alpine, Gentoo) | OpenRC init script + cron job (1min) + sh script |
+| `setup_automount_windows()` | Windows | PowerShell script + `schtasks.exe` scheduled task (5min) |
+| `setup_automount_freebsd()` | FreeBSD | rc.d script + cron job (1min) + sh script |
+| `setup_automount_macos()` | macOS | launchd plist (5s StartInterval) + bash script |
+
+#### Linux (systemd) — Reference Implementation
+
+Installs three files inside the guest VM via `guest_exec()`:
 
 **1. Auto-mount script** (`/usr/local/bin/qemu-automount`):
 
@@ -730,7 +769,14 @@ WantedBy=timers.target
 
 After writing the files, the setup function runs `systemctl daemon-reload && systemctl enable --now qemu-automount.timer` to activate the timer immediately.
 
-**Status check:** `check_automount_status()` runs `systemctl is-active qemu-automount.timer` in the guest. Returns `1` (active), `0` (inactive/not installed), or `-1` (error/VM not running).
+**Status check:** `lv_check_automount_status()` detects the guest OS and checks the appropriate service:
+- **systemd:** `systemctl is-active qemu-automount.timer`
+- **OpenRC:** checks if `/etc/init.d/qemu-automount` exists
+- **Windows:** `schtasks /Query /TN qemu-automount` (checks scheduled task)
+- **FreeBSD:** checks if `/usr/local/etc/rc.d/qemu_automount` exists
+- **macOS:** checks if `~/Library/LaunchAgents/com.qemu.automount.plist` exists
+
+Returns `1` (active), `0` (inactive/not installed), or `-1` (error/VM not running).
 
 **UI integration:** `render_shared_folders()` accepts an `automount_active` parameter:
 - `1` → green "✓ Auto-Mount Active" badge
