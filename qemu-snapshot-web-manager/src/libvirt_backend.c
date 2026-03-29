@@ -818,6 +818,7 @@ int lv_edit_snapshot_description(const char *vm_name, const char *snap_name,
 static int lv_delete_snapshot(const char *vm_name, const char *snap_name,
                               int auto_merge)
 {
+    (void)auto_merge;
     virDomainPtr dom = lv_lookup_domain_locked(vm_name);
     if (!dom) return -1;
     conn_unlock();
@@ -829,20 +830,31 @@ static int lv_delete_snapshot(const char *vm_name, const char *snap_name,
         return -1;
     }
 
-    int ret;
-    if (auto_merge) {
-        /* For external snapshots, metadata-only delete after merge */
-        ret = virDomainSnapshotDelete(snap,
-                VIR_DOMAIN_SNAPSHOT_DELETE_METADATA_ONLY);
-    } else {
-        ret = virDomainSnapshotDelete(snap, 0);
+    /* Detect snapshot type from XML to choose correct delete strategy.
+     * Internal snapshots: flags=0 → deletes both metadata AND qcow2 data.
+     * External snapshots: METADATA_ONLY → data lives in separate overlay files. */
+    int is_external = 0;
+    char *xml = virDomainSnapshotGetXMLDesc(snap, 0);
+    if (xml) {
+        if (strstr(xml, "snapshot='external'") ||
+            strstr(xml, "snapshot=\"external\"") ||
+            strstr(xml, "disk-only"))
+            is_external = 1;
+        free(xml);
     }
+
+    unsigned int flags = is_external
+        ? VIR_DOMAIN_SNAPSHOT_DELETE_METADATA_ONLY
+        : 0;
+
+    int ret = virDomainSnapshotDelete(snap, flags);
 
     virDomainSnapshotFree(snap);
     virDomainFree(dom);
 
     if (ret == 0)
-        log_msg(LOG_INFO, "libvirt: deleted snapshot '%s'", snap_name);
+        log_msg(LOG_INFO, "libvirt: deleted %s snapshot '%s'",
+                is_external ? "external" : "internal", snap_name);
     else
         log_msg(LOG_ERROR, "libvirt: failed to delete snapshot '%s'", snap_name);
     return ret;
