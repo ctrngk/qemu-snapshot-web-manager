@@ -351,15 +351,30 @@ Reverting means "go back in time" to a previous save point.
 
 1. Click on a snapshot in the tree.
 2. In the right panel, click **"↩ Revert"**.
-3. A confirmation dialog will appear. Click OK to confirm.
+3. A confirmation dialog will appear showing the snapshot's details. Click the
+   revert button to confirm.
 
 Your VM will be restored to exactly the state it was in when that snapshot was
 taken.
+
+**What happens after reverting:**
+
+- **Snapshot taken while VM was shut off:** The VM stays shut off at that
+  snapshot's disk state. Start it manually when ready.
+- **Snapshot taken while VM was running:** The VM **automatically resumes** in
+  the exact running state — same open windows, same running programs. This is
+  because the snapshot captured the VM's memory along with the disk.
+- **Snapshot taken while VM was paused:** Same as running — the VM resumes in
+  paused state with memory restored.
 
 > ⚠️ **Warning:** Reverting will discard your VM's current state. Any unsaved
 > work inside the VM — open documents, downloads in progress, anything not in a
 > snapshot — will be lost. Make sure to save your work or create a new snapshot
 > first if you want to keep your current state.
+
+> 💡 **Note:** You cannot revert while the VM is running. The confirmation
+> dialog will indicate when the VM has unsaved changes. If the VM is paused,
+> you can revert directly without needing to shut down first.
 
 <!-- Screenshot: Revert confirmation dialog -->
 
@@ -371,12 +386,46 @@ taken.
 
 The snapshot will be removed from the tree.
 
+> ⚠️ **Important:** The VM must be **shut off** before deleting snapshots. If
+> the VM is running or paused, delete will be blocked with a message asking you
+> to shut down first. This ensures the snapshot data is fully removed from the
+> disk file — not just the metadata.
+
 > 💡 **Don't worry** — deleting a snapshot does **not** affect your VM's current
 > state. It just removes that save point. Your VM keeps running (or stays off)
 > exactly as it was. Think of it like erasing a save file in a game — the game
 > itself isn't affected.
 
 <!-- Screenshot: Delete confirmation dialog -->
+
+### Orphaned Snapshots
+
+Sometimes snapshot data can be left behind in disk files even after deletion
+(for example, if snapshots were deleted using external tools while the VM was
+running). These are called **orphaned snapshots**.
+
+QSWM automatically scans for orphans:
+- When you select a VM (if it's shut off)
+- Every 5 minutes while the page is open
+- Whenever the VM state changes (e.g., after shutting down)
+
+If orphans are found, a **yellow warning banner** appears above the snapshot
+tree showing how many were found. You can expand the list to see their names.
+
+**To clean up orphaned snapshots:**
+
+1. Make sure the VM is **shut off**.
+2. Click the **"🧹 Clean Up"** button in the warning banner.
+3. Confirm the action.
+
+The orphaned data will be removed from the disk files, freeing up space and
+preventing naming conflicts.
+
+> 💡 **Why does this happen?** When QEMU is actively using a disk file (VM is
+> running), it locks the file. Deleting a snapshot in this state can only remove
+> the metadata — the actual data stays in the qcow2 file until the VM is shut
+> off. QSWM prevents this by blocking deletes while the VM is running, but
+> orphans can still occur from external tools like `virsh`.
 
 ### Merging External Snapshots
 
@@ -688,6 +737,11 @@ Some snapshot operations require the VM to be in a certain state.
   be converted. Stop the VM, click the **"🔧 Convert NVRAM"** button in the
   error message, then start the VM and try again. See
   [NVRAM Conversion for UEFI VMs](#nvram-conversion-for-uefi-vms) for details.
+- **Deleting**: The VM must be **shut off**. If you see a message about shutting
+  down first, stop the VM, then delete the snapshot.
+- **"already exists" error when creating**: This usually means an orphaned
+  snapshot exists in the disk file. Look for the ⚠️ orphan warning banner above
+  the tree and click **"🧹 Clean Up"** to fix it.
 - **Reverting**: Works in most states, but if it fails, try stopping the VM
   first, then reverting.
 - **Merging**: The VM **must** be shut off. Stop the VM, then try again.

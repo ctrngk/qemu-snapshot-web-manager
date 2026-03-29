@@ -490,9 +490,11 @@ All endpoints are under `/api/`. HTML responses are fragments intended for HTMX 
 | `GET` | `/api/vms/{name}/snapshots/{snap}` | — | HTML fragment | Snapshot detail panel |
 | `GET` | `/api/vms/{name}/snapshots/form` | — | HTML fragment | Create snapshot form modal |
 | `POST` | `/api/vms/{name}/snapshots` | URL-encoded: `name`, `description`, `type` | HTML success/error | HX-Trigger: `vmStateChanged` |
-| `DELETE` | `/api/vms/{name}/snapshots/{snap}` | — | HTML success/error | Passes `auto_merge=1` to backend |
+| `DELETE` | `/api/vms/{name}/snapshots/{snap}` | — | HTML success/error | Blocked while VM running/paused; detects internal vs external type |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/revert` | — | HTML success/error | HX-Trigger: `vmStateChanged` |
 | `POST` | `/api/vms/{name}/snapshots/{snap}/merge` | — | HTML success/error | Block commit for external snapshots |
+| `GET` | `/api/vms/{name}/orphan-check` | — | HTML fragment | Orphan snapshot warning banner (empty if none); skipped when VM running |
+| `POST` | `/api/vms/{name}/orphan-cleanup` | — | HTML success/error | Delete orphaned qcow2 snapshots; VM must be shut off |
 | `GET` | `/api/vms/{name}/shared-folders` | — | HTML fragment | Shared folders list for VM; includes real-time mount status via guest agent `check_mount_status()` |
 | `GET` | `/api/vms/{name}/shared-folders/form` | — | HTML fragment | Add shared folder form modal |
 | `GET` | `/api/browse?path=...` | — | HTML fragment | Server-side directory browser; returns folder listing for the given path |
@@ -903,6 +905,12 @@ curl -X POST http://localhost:9091/api/vms/myvm/force-stop
 
 # Convert NVRAM from raw to qcow2
 curl -X POST http://localhost:9091/api/vms/myvm/convert-nvram
+
+# Scan for orphaned qcow2 snapshots (VM must be shut off)
+curl http://localhost:9091/api/vms/myvm/orphan-check
+
+# Clean up orphaned snapshots
+curl -X POST http://localhost:9091/api/vms/myvm/orphan-cleanup
 ```
 
 ### Verbose Libvirt Logging
@@ -924,7 +932,58 @@ The `LIBVIRT_DEBUG` environment variable enables verbose output from the libvirt
 
 ---
 
-## 13. Known Technical Debt / TODOs
+## 13. Important Implementation Notes
+
+### Snapshot Delete: Internal vs External
+
+When deleting snapshots, `lv_delete_snapshot()` detects the snapshot type from
+its XML and uses different strategies:
+
+- **Internal snapshots** (data inside qcow2): Uses `virDomainSnapshotDelete(snap, 0)` —
+  full delete that removes both libvirt metadata AND the snapshot data from the qcow2 file.
+  VM must be shut off.
+- **External snapshots** (data in overlay files): Uses `VIR_DOMAIN_SNAPSHOT_DELETE_METADATA_ONLY` —
+  removes only libvirt metadata. The overlay files are managed separately via merge (block-commit).
+
+The route handler (`handle_delete_snapshot()`) blocks deletion while the VM is running or paused
+because `virDomainSnapshotDelete()` cannot safely modify qcow2 files locked by QEMU.
+
+### Orphaned qcow2 Snapshots
+
+**What are they?** Snapshot data left in qcow2 files after libvirt metadata was deleted but the
+qcow2 data wasn't cleaned. This happens when:
+- Snapshots are deleted while VM is running (via external tools like `virsh`)
+- The previous code incorrectly used `METADATA_ONLY` for all deletes (fixed)
+
+**Detection:** `lv_scan_orphan_snapshots()` runs `qemu-img snapshot -l` on each disk file
+and compares with `virDomainSnapshotListNames()`. Names in qcow2 but not in libvirt = orphans.
+
+**Cleanup:** `lv_cleanup_orphan_snapshots()` runs `qemu-img snapshot -d <name> <file>` for each.
+
+**Frontend integration:** The `#orphan-check` div polls `GET /api/vms/{name}/orphan-check` on
+VM selection, every 5 minutes, and on `vmStateChanged`. Returns empty HTML when clean.
+
+### Revert Behavior by VM State
+
+- **Running VM → revert:** Blocked. User must stop or pause first.
+- **Paused VM → revert:** Allowed. Same flow as shut-off (dirty state tracked in table).
+- **Shut-off VM → revert:** Allowed. If the target snapshot was taken while running, the VM
+  auto-resumes (libvirt restores saved memory state). This is intentional — do NOT call
+  `virDomainDestroy()` after revert as it destroys the memory state.
+
+### Dirty State Tracking
+
+`vm_is_dirty()` in `routes.c` determines if the VM has unsaved changes since the last snapshot:
+
+- **Running VMs:** Always dirty (state changes continuously)
+- **Paused VMs:** Check tracking table; default to dirty if not tracked
+- **Shut-off VMs:** Check tracking table; default to clean if not tracked
+
+The tracking table is updated after snapshot creation to mark the VM as clean.
+
+---
+
+## 14. Known Technical Debt / TODOs
 
 - **No authentication or authorization.** The server binds to all interfaces. Use a reverse proxy or firewall to restrict access.
 - **No HTTPS.** TLS termination should be handled by a reverse proxy (e.g., nginx, Caddy).
