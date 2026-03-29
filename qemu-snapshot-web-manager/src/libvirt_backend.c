@@ -1571,6 +1571,121 @@ static int lv_check_mount_status(const char *vm_name,
 /*  Auto-mount: check if qemu-automount.timer is active in guest      */
 /* ------------------------------------------------------------------ */
 
+/* Guest OS types for auto-mount dispatch */
+typedef enum {
+    GUEST_OS_LINUX_SYSTEMD,
+    GUEST_OS_LINUX_OPENRC,
+    GUEST_OS_LINUX_OTHER,
+    GUEST_OS_WINDOWS,
+    GUEST_OS_FREEBSD,
+    GUEST_OS_MACOS,
+    GUEST_OS_UNKNOWN
+} guest_os_t;
+
+/* Detect guest OS using guest-agent osinfo or binary probing */
+static guest_os_t detect_guest_os(virDomainPtr dom)
+{
+    char *msg = NULL;
+    int rc;
+
+    /* Try guest-get-osinfo first (QGA 2.10+) */
+    char *osinfo_json = virDomainQemuAgentCommand(dom,
+        "{\"execute\":\"guest-get-osinfo\"}", 10, 0);
+    if (osinfo_json) {
+        json_error_t jerr;
+        json_t *resp = json_loads(osinfo_json, 0, &jerr);
+        free(osinfo_json);
+        if (resp) {
+            json_t *ret = json_object_get(resp, "return");
+            const char *kernel = json_string_value(json_object_get(ret, "kernel-release"));
+            const char *os_id = json_string_value(json_object_get(ret, "id"));
+            const char *name = json_string_value(json_object_get(ret, "name"));
+
+            guest_os_t detected = GUEST_OS_UNKNOWN;
+
+            /* Check Windows first */
+            if ((name && (strcasestr(name, "windows") || strcasestr(name, "Microsoft"))) ||
+                (os_id && strcasestr(os_id, "mswindows"))) {
+                detected = GUEST_OS_WINDOWS;
+            }
+            /* Check macOS */
+            else if ((name && strcasestr(name, "macOS")) ||
+                     (kernel && strstr(kernel, "Darwin"))) {
+                detected = GUEST_OS_MACOS;
+            }
+            /* Check FreeBSD */
+            else if ((os_id && strcasestr(os_id, "freebsd")) ||
+                     (name && strcasestr(name, "FreeBSD")) ||
+                     (kernel && strstr(kernel, "FreeBSD"))) {
+                detected = GUEST_OS_FREEBSD;
+            }
+            /* Otherwise assume Linux */
+            else {
+                detected = GUEST_OS_LINUX_SYSTEMD; /* refined below */
+            }
+
+            json_decref(resp);
+
+            if (detected == GUEST_OS_LINUX_SYSTEMD) {
+                /* Check which init system */
+                rc = guest_exec(dom, "systemctl --version >/dev/null 2>&1", &msg);
+                free(msg); msg = NULL;
+                if (rc == 0) return GUEST_OS_LINUX_SYSTEMD;
+
+                rc = guest_exec(dom, "rc-service --version >/dev/null 2>&1", &msg);
+                free(msg); msg = NULL;
+                if (rc == 0) return GUEST_OS_LINUX_OPENRC;
+
+                return GUEST_OS_LINUX_OTHER;
+            }
+            return detected;
+        }
+    }
+
+    /* Fallback: probe for OS-specific binaries */
+    log_msg(LOG_DEBUG, "guest-get-osinfo not available, probing binaries");
+
+    /* Check for Windows (cmd.exe) */
+    rc = guest_exec(dom, "cmd.exe /c echo ok", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) return GUEST_OS_WINDOWS;
+
+    /* Check for FreeBSD (freebsd-version) */
+    rc = guest_exec(dom, "freebsd-version >/dev/null 2>&1", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) return GUEST_OS_FREEBSD;
+
+    /* Check for macOS (sw_vers) */
+    rc = guest_exec(dom, "sw_vers >/dev/null 2>&1", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) return GUEST_OS_MACOS;
+
+    /* Assume Linux — check init system */
+    rc = guest_exec(dom, "systemctl --version >/dev/null 2>&1", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) return GUEST_OS_LINUX_SYSTEMD;
+
+    rc = guest_exec(dom, "rc-service --version >/dev/null 2>&1", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) return GUEST_OS_LINUX_OPENRC;
+
+    return GUEST_OS_LINUX_OTHER;
+}
+
+static const char *guest_os_name(guest_os_t os)
+{
+    switch (os) {
+    case GUEST_OS_LINUX_SYSTEMD: return "Linux (systemd)";
+    case GUEST_OS_LINUX_OPENRC:  return "Linux (OpenRC)";
+    case GUEST_OS_LINUX_OTHER:   return "Linux (other)";
+    case GUEST_OS_WINDOWS:       return "Windows";
+    case GUEST_OS_FREEBSD:       return "FreeBSD";
+    case GUEST_OS_MACOS:         return "macOS";
+    case GUEST_OS_UNKNOWN:       return "Unknown";
+    }
+    return "Unknown";
+}
+
 static int lv_check_automount_status(const char *vm_name)
 {
     virDomainPtr dom = lv_lookup_domain_locked(vm_name);
@@ -1584,45 +1699,56 @@ static int lv_check_automount_status(const char *vm_name)
     }
 
     char *msg = NULL;
-    int rc = guest_exec(dom, "systemctl is-active qemu-automount.timer", &msg);
-    virDomainFree(dom);
-    free(msg);
+    int rc;
 
-    if (rc == 0) return 1;   /* active */
-    return 0;                 /* inactive or not installed */
+    /* Check systemd timer (Linux) */
+    rc = guest_exec(dom, "systemctl is-active qemu-automount.timer 2>/dev/null", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) { virDomainFree(dom); return 1; }
+
+    /* Check OpenRC service (Alpine Linux) */
+    rc = guest_exec(dom, "rc-service qemu-automount status 2>/dev/null | grep -q started", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) { virDomainFree(dom); return 1; }
+
+    /* Check Windows scheduled task */
+    rc = guest_exec(dom, "schtasks.exe /Query /TN \"QEMU-AutoMount\" >NUL 2>&1", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) { virDomainFree(dom); return 1; }
+
+    /* Check FreeBSD rc service */
+    rc = guest_exec(dom, "service qemu_automount status 2>/dev/null | grep -q running", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) { virDomainFree(dom); return 1; }
+
+    /* Check macOS launchd */
+    rc = guest_exec(dom, "launchctl list com.qemu.automount 2>/dev/null", &msg);
+    free(msg); msg = NULL;
+    if (rc == 0) { virDomainFree(dom); return 1; }
+
+    virDomainFree(dom);
+    return 0;  /* not active */
 }
 
 /* ------------------------------------------------------------------ */
 /*  Auto-mount: install systemd service in guest                      */
 /* ------------------------------------------------------------------ */
 
-static int lv_setup_automount(const char *vm_name, char **out_msg)
+/* ------------------------------------------------------------------ */
+/*  Auto-mount setup: OS-specific installers                          */
+/* ------------------------------------------------------------------ */
+
+/* Linux (systemd): timer + script — existing approach */
+static int setup_automount_systemd(virDomainPtr dom, char **out_msg)
 {
-    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
-    if (!dom) {
-        if (out_msg) *out_msg = strdup("VM not found or not connected to libvirt");
-        return -1;
-    }
-    conn_unlock();
-
-    virDomainInfo info;
-    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
-        virDomainFree(dom);
-        if (out_msg) *out_msg = strdup("VM is not running");
-        return -1;
-    }
-
     char *msg = NULL;
     int rc;
 
-    /* Step 0: Make virt_qemu_ga_t permissive so guest agent can write system files.
-     * This is needed because SELinux blocks writes from the guest agent context.
-     * Ignore errors — semanage may not be installed, or already permissive. */
+    /* Step 0: Make virt_qemu_ga_t permissive (best-effort) */
     rc = guest_exec(dom,
         "which semanage >/dev/null 2>&1 && semanage permissive -a virt_qemu_ga_t 2>/dev/null; true",
         &msg);
     free(msg); msg = NULL;
-    /* Don't check rc — this step is best-effort */
 
     /* Step 1: Write the auto-mount script */
     rc = guest_exec(dom,
@@ -1641,7 +1767,6 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
         "chmod +x /usr/local/bin/qemu-automount",
         &msg);
     if (rc != 0) {
-        log_msg(LOG_ERROR, "automount: failed to write script: %s", msg ? msg : "unknown");
         if (out_msg) {
             if (msg && strstr(msg, "Permission denied")) {
                 *out_msg = strdup(
@@ -1650,12 +1775,10 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
                     "sudo semanage permissive -a virt_qemu_ga_t "
                     "(requires: sudo dnf install policycoreutils-python-utils)");
             } else {
-                *out_msg = msg;
-                msg = NULL;
+                *out_msg = msg; msg = NULL;
             }
         }
         free(msg);
-        virDomainFree(dom);
         return -1;
     }
     free(msg); msg = NULL;
@@ -1672,9 +1795,8 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
         "EOF",
         &msg);
     if (rc != 0) {
-        log_msg(LOG_ERROR, "automount: failed to write service: %s", msg ? msg : "unknown");
-        if (out_msg) *out_msg = msg; else free(msg);
-        virDomainFree(dom);
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
         return -1;
     }
     free(msg); msg = NULL;
@@ -1695,9 +1817,8 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
         "EOF",
         &msg);
     if (rc != 0) {
-        log_msg(LOG_ERROR, "automount: failed to write timer: %s", msg ? msg : "unknown");
-        if (out_msg) *out_msg = msg; else free(msg);
-        virDomainFree(dom);
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
         return -1;
     }
     free(msg); msg = NULL;
@@ -1707,17 +1828,322 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
         "systemctl daemon-reload && systemctl enable --now qemu-automount.timer",
         &msg);
     if (rc != 0) {
-        log_msg(LOG_ERROR, "automount: failed to enable timer: %s", msg ? msg : "unknown");
-        if (out_msg) *out_msg = msg; else free(msg);
-        virDomainFree(dom);
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
         return -1;
     }
     free(msg);
-
-    log_msg(LOG_INFO, "Auto-mount service installed and started in guest %s", vm_name);
-    virDomainFree(dom);
-    if (out_msg) *out_msg = NULL;
     return 0;
+}
+
+/* Linux (OpenRC): service script + crontab */
+static int setup_automount_openrc(virDomainPtr dom, char **out_msg)
+{
+    char *msg = NULL;
+    int rc;
+
+    /* Step 1: Write the auto-mount script (same as systemd) */
+    rc = guest_exec(dom,
+        "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
+        "#!/bin/sh\n"
+        "for tag_path in /sys/fs/virtiofs/*/tag; do\n"
+        "    [ -e \"$tag_path\" ] || continue\n"
+        "    TAG=$(cat \"$tag_path\")\n"
+        "    MOUNT_POINT=\"/media/$TAG\"\n"
+        "    mkdir -p \"$MOUNT_POINT\"\n"
+        "    if ! mountpoint -q \"$MOUNT_POINT\"; then\n"
+        "        mount -t virtiofs \"$TAG\" \"$MOUNT_POINT\" 2>/dev/null\n"
+        "    fi\n"
+        "done\n"
+        "SCRIPT\n"
+        "chmod +x /usr/local/bin/qemu-automount",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 2: Write OpenRC init script */
+    rc = guest_exec(dom,
+        "cat > /etc/init.d/qemu-automount << 'EOF'\n"
+        "#!/sbin/openrc-run\n"
+        "description=\"QEMU/KVM VirtioFS Auto-Mounter\"\n"
+        "command=/usr/local/bin/qemu-automount\n"
+        "command_background=false\n"
+        "\n"
+        "depend() {\n"
+        "    need localmount\n"
+        "}\n"
+        "EOF\n"
+        "chmod +x /etc/init.d/qemu-automount",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 3: Enable and start + add crontab for periodic re-check */
+    rc = guest_exec(dom,
+        "rc-update add qemu-automount default 2>/dev/null; "
+        "rc-service qemu-automount start 2>/dev/null; "
+        "(crontab -l 2>/dev/null | grep -v qemu-automount; "
+        "echo '*/1 * * * * /usr/local/bin/qemu-automount') | crontab -",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg);
+    return 0;
+}
+
+/* Windows: PowerShell script + Scheduled Task */
+static int setup_automount_windows(virDomainPtr dom, char **out_msg)
+{
+    char *msg = NULL;
+    int rc;
+
+    /* Step 1: Write PowerShell auto-mount script.
+     * On Windows, VirtioFS shares appear as network drives or can be
+     * mounted via the WinFsp/VirtioFS driver. The script checks for
+     * VirtioFS devices and mounts them. */
+    rc = guest_exec(dom,
+        "cmd.exe /c \"mkdir C:\\ProgramData\\QEMU 2>NUL & "
+        "echo # QEMU VirtioFS Auto-Mounter > C:\\ProgramData\\QEMU\\automount.ps1 & "
+        "echo $vfs = Get-PnpDevice -FriendlyName '*VirtIO FS*' -ErrorAction SilentlyContinue >> C:\\ProgramData\\QEMU\\automount.ps1 & "
+        "echo if (-not $vfs) { exit } >> C:\\ProgramData\\QEMU\\automount.ps1 & "
+        "echo $shares = Get-CimInstance -ClassName Win32_NetworkConnection -ErrorAction SilentlyContinue >> C:\\ProgramData\\QEMU\\automount.ps1 & "
+        "echo # Mount any unmounted VirtioFS shares >> C:\\ProgramData\\QEMU\\automount.ps1 & "
+        "echo Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue ^| Out-Null >> C:\\ProgramData\\QEMU\\automount.ps1\"",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) {
+            *out_msg = strdup("Failed to create auto-mount script. "
+                "Windows VirtioFS support requires the VirtIO-Win drivers "
+                "and WinFsp to be installed.");
+            (void)msg;
+        }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 2: Create a scheduled task to run every 5 minutes */
+    rc = guest_exec(dom,
+        "cmd.exe /c \"schtasks.exe /Create /TN QEMU-AutoMount "
+        "/SC MINUTE /MO 5 "
+        "/TR \\\"powershell.exe -ExecutionPolicy Bypass -File C:\\ProgramData\\QEMU\\automount.ps1\\\" "
+        "/RU SYSTEM /F\"",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg);
+    return 0;
+}
+
+/* FreeBSD: rc.d script */
+static int setup_automount_freebsd(virDomainPtr dom, char **out_msg)
+{
+    char *msg = NULL;
+    int rc;
+
+    /* Step 1: Write the auto-mount script */
+    rc = guest_exec(dom,
+        "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
+        "#!/bin/sh\n"
+        "# Mount all VirtioFS shares\n"
+        "for tag in $(sysctl -n vfs.virtiofs.tags 2>/dev/null); do\n"
+        "    MOUNT_POINT=\"/media/$tag\"\n"
+        "    mkdir -p \"$MOUNT_POINT\"\n"
+        "    mount | grep -q \"$MOUNT_POINT\" || mount -t virtiofs \"$tag\" \"$MOUNT_POINT\" 2>/dev/null\n"
+        "done\n"
+        "SCRIPT\n"
+        "chmod +x /usr/local/bin/qemu-automount",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 2: Write rc.d script */
+    rc = guest_exec(dom,
+        "cat > /usr/local/etc/rc.d/qemu_automount << 'EOF'\n"
+        "#!/bin/sh\n"
+        "# PROVIDE: qemu_automount\n"
+        "# REQUIRE: FILESYSTEMS\n"
+        ". /etc/rc.subr\n"
+        "name=qemu_automount\n"
+        "rcvar=qemu_automount_enable\n"
+        "start_cmd=\"/usr/local/bin/qemu-automount\"\n"
+        "load_rc_config $name\n"
+        "run_rc_command \"$1\"\n"
+        "EOF\n"
+        "chmod +x /usr/local/etc/rc.d/qemu_automount",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 3: Enable and start */
+    rc = guest_exec(dom,
+        "sysrc qemu_automount_enable=YES 2>/dev/null; "
+        "service qemu_automount start 2>/dev/null; "
+        "(crontab -l 2>/dev/null | grep -v qemu-automount; "
+        "echo '*/1 * * * * /usr/local/bin/qemu-automount') | crontab -",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg);
+    return 0;
+}
+
+/* macOS: launchd plist */
+static int setup_automount_macos(virDomainPtr dom, char **out_msg)
+{
+    char *msg = NULL;
+    int rc;
+
+    /* Step 1: Write the auto-mount script */
+    rc = guest_exec(dom,
+        "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
+        "#!/bin/bash\n"
+        "# Mount VirtioFS shares on macOS guest\n"
+        "# Note: macOS VirtioFS support is limited; this is best-effort\n"
+        "for tag in $(mount -t virtiofs 2>/dev/null | awk '{print $1}'); do\n"
+        "    MOUNT_POINT=\"/Volumes/$tag\"\n"
+        "    mkdir -p \"$MOUNT_POINT\" 2>/dev/null\n"
+        "    mount | grep -q \"$MOUNT_POINT\" || mount -t virtiofs \"$tag\" \"$MOUNT_POINT\" 2>/dev/null\n"
+        "done\n"
+        "SCRIPT\n"
+        "chmod +x /usr/local/bin/qemu-automount",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 2: Write launchd plist */
+    rc = guest_exec(dom,
+        "cat > /Library/LaunchDaemons/com.qemu.automount.plist << 'EOF'\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+        "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\">\n"
+        "<dict>\n"
+        "    <key>Label</key>\n"
+        "    <string>com.qemu.automount</string>\n"
+        "    <key>ProgramArguments</key>\n"
+        "    <array>\n"
+        "        <string>/usr/local/bin/qemu-automount</string>\n"
+        "    </array>\n"
+        "    <key>StartInterval</key>\n"
+        "    <integer>5</integer>\n"
+        "    <key>RunAtLoad</key>\n"
+        "    <true/>\n"
+        "</dict>\n"
+        "</plist>\n"
+        "EOF",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg); msg = NULL;
+
+    /* Step 3: Load the daemon */
+    rc = guest_exec(dom,
+        "launchctl load /Library/LaunchDaemons/com.qemu.automount.plist 2>/dev/null",
+        &msg);
+    if (rc != 0) {
+        if (out_msg) { *out_msg = msg; msg = NULL; }
+        free(msg);
+        return -1;
+    }
+    free(msg);
+    return 0;
+}
+
+static int lv_setup_automount(const char *vm_name, char **out_msg)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) {
+        if (out_msg) *out_msg = strdup("VM not found or not connected to libvirt");
+        return -1;
+    }
+    conn_unlock();
+
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
+        virDomainFree(dom);
+        if (out_msg) *out_msg = strdup("VM is not running");
+        return -1;
+    }
+
+    /* Detect guest OS */
+    guest_os_t os = detect_guest_os(dom);
+    log_msg(LOG_INFO, "Detected guest OS for %s: %s", vm_name, guest_os_name(os));
+
+    int rc;
+    switch (os) {
+    case GUEST_OS_LINUX_SYSTEMD:
+        rc = setup_automount_systemd(dom, out_msg);
+        break;
+    case GUEST_OS_LINUX_OPENRC:
+        rc = setup_automount_openrc(dom, out_msg);
+        break;
+    case GUEST_OS_WINDOWS:
+        rc = setup_automount_windows(dom, out_msg);
+        break;
+    case GUEST_OS_FREEBSD:
+        rc = setup_automount_freebsd(dom, out_msg);
+        break;
+    case GUEST_OS_MACOS:
+        rc = setup_automount_macos(dom, out_msg);
+        break;
+    case GUEST_OS_LINUX_OTHER:
+    case GUEST_OS_UNKNOWN:
+    default:
+        /* Try systemd first as fallback, it's the most common */
+        rc = setup_automount_systemd(dom, out_msg);
+        if (rc != 0) {
+            free(out_msg ? *out_msg : NULL);
+            if (out_msg) {
+                *out_msg = strdup(
+                    "Could not detect init system. "
+                    "Tried systemd but it's not available. "
+                    "Supported: Linux (systemd, OpenRC), Windows, FreeBSD, macOS.");
+            }
+        }
+        break;
+    }
+
+    if (rc == 0) {
+        log_msg(LOG_INFO, "Auto-mount service installed in guest %s (%s)",
+                vm_name, guest_os_name(os));
+    }
+
+    virDomainFree(dom);
+    if (rc == 0 && out_msg) *out_msg = NULL;
+    return rc;
 }
 
 /* ------------------------------------------------------------------ */
