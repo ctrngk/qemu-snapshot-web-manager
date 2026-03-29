@@ -381,12 +381,16 @@ char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
             "        <div class=\"alert alert-warning\" style=\"margin-bottom:0.75rem\">\n"
             "            ⚠️ <strong>NVRAM is in raw format.</strong> "
             "Internal snapshots require qcow2 NVRAM. "
-            "Stop the VM and "
-            "<a href=\"#\" onclick=\"event.preventDefault();"
+            "Stop the VM first, then convert.\n"
+            "            <div style=\"margin-top:0.5rem\">\n"
+            "              <button type=\"button\" class=\"btn btn-sm btn-warning\"\n"
+            "                onclick=\"event.preventDefault();"
             "this.closest('.modal-overlay').remove();"
             "htmx.ajax('POST','/api/vms/%s/convert-nvram',"
-            "{target:'#vm-notification',swap:'innerHTML'})\">"
-            "convert NVRAM</a> first, or use External type.\n"
+            "{target:'#vm-notification',swap:'innerHTML'})\">\n"
+            "                🔧 Convert NVRAM to qcow2\n"
+            "              </button>\n"
+            "            </div>\n"
             "        </div>\n",
             esc_vm);
     }
