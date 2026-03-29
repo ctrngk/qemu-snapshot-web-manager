@@ -630,8 +630,43 @@ static enum MHD_Result handle_delete_snapshot(struct MHD_Connection *conn,
                                               const char *snap_name)
 {
     vm_backend_t *be = backend_get();
-    if (!be || be->delete_snapshot(vm_name, snap_name, 1) != 0) {
-        char *html = render_error("Failed to delete snapshot");
+    if (!be) {
+        char *html = render_error("No backend available");
+        enum MHD_Result ret = send_html(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, html);
+        free(html);
+        return ret;
+    }
+
+    /* Block deleting internal snapshots while VM is running/paused.
+     * libvirt only removes metadata — the actual data stays orphaned
+     * inside the qcow2 file, causing "already exists" errors later. */
+    vm_info_t **vms = NULL;
+    int vcount = 0;
+    if (be->list_vms(&vms, &vcount) == 0) {
+        for (int i = 0; i < vcount; i++) {
+            if (str_eq(vms[i]->name, vm_name)) {
+                if (vms[i]->state == VM_RUNNING ||
+                    vms[i]->state == VM_PAUSED) {
+                    be->free_vm_list(vms, vcount);
+                    char *html = render_error(
+                        "Cannot delete snapshots while VM is running or paused. "
+                        "Please shut down the VM first to fully remove snapshot data.");
+                    enum MHD_Result ret = send_html_trigger(conn,
+                        MHD_HTTP_BAD_REQUEST, html, "vmStateChanged");
+                    free(html);
+                    return ret;
+                }
+                break;
+            }
+        }
+        be->free_vm_list(vms, vcount);
+    }
+
+    if (be->delete_snapshot(vm_name, snap_name, 1) != 0) {
+        const char *err = lv_get_last_error();
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Failed to delete snapshot: %s", err);
+        char *html = render_error(msg);
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                                                 html, "vmStateChanged");
         free(html);
