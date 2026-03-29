@@ -26,4 +26,14 @@ int lv_enable_shared_memory(const char *vm_name);
 int lv_edit_snapshot_description(const char *vm_name, const char *snap_name,
                                  const char *new_description);
 
+/* Scan for orphan snapshots in qcow2 files (metadata deleted but data remains).
+ * Only works when VM is shut off. Returns count of orphans, fills arrays.
+ * Caller must free each name and the array. Returns 0 if VM is running. */
+int lv_scan_orphan_snapshots(const char *vm_name,
+                              char ***orphan_names_out, int *orphan_count_out);
+
+/* Delete all orphan snapshots from qcow2 files.
+ * Returns number of orphans cleaned, or -1 on error. */
+int lv_cleanup_orphan_snapshots(const char *vm_name);
+
 #endif

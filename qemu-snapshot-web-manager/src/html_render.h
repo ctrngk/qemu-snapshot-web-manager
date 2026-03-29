@@ -42,4 +42,9 @@ char *render_error_html(const char *html_message);
  * Returns malloc'd HTML string. */
 char *render_directory_listing(const char *current_path, char **entries, int count);
 
+/* Render orphan snapshot warning banner.
+ * Shows count and names of orphaned snapshots with a cleanup button.
+ * Returns malloc'd HTML string (empty string if no orphans). */
+char *render_orphan_warning(const char *vm_name, char **orphan_names, int count);
+
 #endif

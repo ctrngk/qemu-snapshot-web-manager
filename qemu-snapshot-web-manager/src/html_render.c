@@ -770,3 +770,50 @@ char *render_error_html(const char *html_message)
 {
     return str_fmt("<div class=\"alert alert-error\">\xe2\x9c\x97 %s</div>", html_message);
 }
+
+char *render_orphan_warning(const char *vm_name, char **orphan_names, int count)
+{
+    if (!orphan_names || count <= 0)
+        return str_dup("");
+
+    char *esc_vm = html_escape(vm_name);
+
+    strbuf_t sb;
+    sb_init(&sb, 1024);
+
+    sb_append(&sb,
+        "<div class=\"orphan-warning\">\n"
+        "  <div class=\"orphan-header\">\n"
+        "    <span class=\"orphan-icon\">⚠️</span>\n");
+    sb_appendf(&sb,
+        "    <strong>Found %d orphaned snapshot%s in disk files</strong>\n",
+        count, count == 1 ? "" : "s");
+    sb_append(&sb,
+        "  </div>\n"
+        "  <p class=\"orphan-detail\">These waste disk space and may cause naming "
+        "conflicts when creating new snapshots.</p>\n"
+        "  <details class=\"orphan-list-details\">\n"
+        "    <summary>Show orphan names</summary>\n"
+        "    <ul class=\"orphan-list\">\n");
+
+    for (int i = 0; i < count; i++) {
+        char *esc = html_escape(orphan_names[i]);
+        sb_appendf(&sb, "      <li>%s</li>\n", esc);
+        free(esc);
+    }
+
+    sb_append(&sb, "    </ul>\n  </details>\n");
+    sb_appendf(&sb,
+        "  <button class=\"btn btn-sm btn-warning\"\n"
+        "          hx-post=\"/api/vms/%s/orphan-cleanup\"\n"
+        "          hx-target=\"#orphan-check\"\n"
+        "          hx-swap=\"innerHTML\"\n"
+        "          hx-confirm=\"Delete %d orphaned snapshot%s from disk files?\">\n"
+        "    🧹 Clean Up\n"
+        "  </button>\n"
+        "</div>\n",
+        esc_vm, count, count == 1 ? "" : "s");
+
+    free(esc_vm);
+    return sb_finish(&sb);
+}
