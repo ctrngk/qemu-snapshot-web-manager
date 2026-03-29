@@ -863,6 +863,17 @@ static int lv_revert_snapshot(const char *vm_name, const char *snap_name)
 
     int ret = virDomainRevertToSnapshot(snap, VIR_DOMAIN_SNAPSHOT_REVERT_FORCE);
     virDomainSnapshotFree(snap);
+
+    if (ret == 0) {
+        /* Check if VM auto-started (running snapshot restores memory state).
+         * By default, stop it so user decides when to start. */
+        int state = 0;
+        virDomainGetState(dom, &state, NULL, 0);
+        if (state == VIR_DOMAIN_RUNNING || state == VIR_DOMAIN_PAUSED) {
+            virDomainDestroy(dom);
+        }
+    }
+
     virDomainFree(dom);
     return ret;
 }
