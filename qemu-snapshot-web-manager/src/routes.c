@@ -457,6 +457,12 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
         return ret;
     }
 
+    /* Replace spaces with hyphens — QEMU job IDs break on spaces
+     * when taking internal snapshots of running VMs */
+    for (char *p = name; *p; p++) {
+        if (*p == ' ') *p = '-';
+    }
+
     snap_type_t type = SNAP_INTERNAL;
     if (type_str && str_eq(type_str, "external"))
         type = SNAP_EXTERNAL;
@@ -476,14 +482,18 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
                 "<div style=\"margin-top:8px\">"
                 "<button class=\"btn btn-sm btn-primary\""
                 " hx-post=\"/api/vms/%s/convert-nvram\""
-                " hx-target=\"#snapshot-tree\""
+                " hx-target=\"#vm-notification\""
                 " hx-swap=\"innerHTML\""
                 " hx-confirm=\"Convert NVRAM from raw to qcow2? "
                 "This is safe and required for internal snapshots on UEFI VMs. "
                 "Your data will NOT be lost.\""
-                ">🔧 Convert NVRAM</button>"
+                ">\xf0\x9f\x94\xa7 Convert NVRAM</button>"
                 "</div>",
                 vm_name);
+        } else if (strstr(err, "Invalid job ID")) {
+            snprintf(msg, sizeof(msg),
+                "Failed to create snapshot: QEMU rejected the snapshot name. "
+                "Try a simpler name without special characters.");
         } else {
             snprintf(msg, sizeof(msg), "Failed to create snapshot: %s", err);
         }

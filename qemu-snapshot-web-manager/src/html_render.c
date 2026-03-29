@@ -381,15 +381,16 @@ char *render_create_snapshot_form(const char *vm_name, int nvram_is_qcow2)
     }
 
     sb_appendf(&sb,
+        "        <div id=\"snap-form-error\"></div>\n"
         "        <form hx-post=\"/api/vms/%s/snapshots\"\n"
-        "              hx-target=\"#snapshot-tree\"\n"
+        "              hx-target=\"#snap-form-error\"\n"
         "              hx-swap=\"innerHTML\"\n"
-        "              hx-on::after-request=\"this.closest('.modal-overlay').remove()\">\n",
+        "              hx-on::after-request=\"if(event.detail.successful) this.closest('.modal-overlay').remove()\">\n",
         esc_vm);
     sb_append(&sb,
         "            <div class=\"form-group\">\n"
         "                <label class=\"form-label\">Name</label>\n"
-        "                <input class=\"form-input\" name=\"name\" placeholder=\"snapshot-name\" required>\n"
+        "                <input class=\"form-input\" name=\"name\" placeholder=\"my-snapshot\" required>\n"
         "            </div>\n");
     sb_append(&sb,
         "            <div class=\"form-group\">\n"
