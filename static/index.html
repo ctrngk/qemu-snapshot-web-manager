@@ -255,7 +255,7 @@
             // Load orphan snapshot check (polls every 5 min + on VM state change)
             var orphanDiv = document.getElementById('orphan-check');
             orphanDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/orphan-check');
-            orphanDiv.setAttribute('hx-trigger', 'load, vmStateChanged from:body, every 300s');
+            orphanDiv.setAttribute('hx-trigger', 'load, vmStateChanged from:body, every 10s');
             orphanDiv.setAttribute('hx-swap', 'innerHTML');
             htmx.process(orphanDiv);
             htmx.ajax('GET', '/api/vms/' + vmName + '/orphan-check', {
@@ -265,7 +265,7 @@
             // Load shared folders (refreshes on add/remove/mount/unmount AND revert/state changes)
             var sfDiv = document.getElementById('shared-folders-content');
             sfDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/shared-folders');
-            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body, vmStateChanged from:body, every 30s');
+            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body, vmStateChanged from:body, every 10s');
             sfDiv.setAttribute('hx-swap', 'innerHTML');
             htmx.process(sfDiv);
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
@@ -302,20 +302,8 @@
             }
         });
 
-        // After VM state change (start/stop/revert), the guest agent takes
-        // time to come online.  Fire delayed refreshes so the panel
-        // catches up once the agent is ready instead of showing stale data.
-        document.body.addEventListener('vmStateChanged', function() {
-            if (window.currentVm) {
-                [5000, 15000].forEach(function(delay) {
-                    setTimeout(function() {
-                        htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
-                            target: '#shared-folders-content', swap: 'innerHTML'
-                        });
-                    }, delay);
-                });
-            }
-        });
+        // vmStateChanged delayed retries are no longer needed — the 10s
+        // hard-refresh poll on every panel catches guest-agent readiness.
 
         /* ── Directory Browser ────────────────────────────────── */
         function openDirBrowser() {
