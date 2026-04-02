@@ -262,7 +262,12 @@
                 target: '#orphan-check', swap: 'innerHTML'
             });
 
-            // Load shared folders via HTMX
+            // Load shared folders (refreshes on add/remove/mount/unmount events)
+            var sfDiv = document.getElementById('shared-folders-content');
+            sfDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/shared-folders');
+            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body');
+            sfDiv.setAttribute('hx-swap', 'innerHTML');
+            htmx.process(sfDiv);
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
                 target: '#shared-folders-content', swap: 'innerHTML'
             });
@@ -284,14 +289,8 @@
             }
         }
 
-        // Refresh shared folders list when folders are added/removed
-        document.body.addEventListener('sharedFoldersChanged', function() {
-            if (window.currentVm) {
-                htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
-                    target: '#shared-folders-content', swap: 'innerHTML'
-                });
-            }
-        });
+        // sharedFoldersChanged refresh is handled natively by hx-trigger
+        // on #shared-folders-content (set in selectVm)
 
         /* ── Directory Browser ────────────────────────────────── */
         function openDirBrowser() {
