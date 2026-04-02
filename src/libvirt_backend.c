@@ -1069,6 +1069,9 @@ int lv_enable_shared_memory(const char *vm_name)
     return 0;
 }
 
+/* Forward declaration — defined below in the guest agent section */
+static int guest_exec(virDomainPtr dom, const char *command, char **out_msg);
+
 static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
                                 const char *mount_tag, int read_only,
                                 const char *fs_type)
@@ -1169,6 +1172,23 @@ static int lv_add_shared_folder(const char *vm_name, const char *source_dir,
         }
         log_msg(LOG_INFO, "libvirt: added shared folder '%s' (%s) to '%s'",
                 mount_tag, fs_type, vm_name);
+
+        /* Hot-added to running VM — try to mount inside guest immediately */
+        if (flags & VIR_DOMAIN_AFFECT_LIVE) {
+            const char *mnt_fs = str_eq(fs_type, "9p") ? "9p" : "virtiofs";
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd),
+                "mkdir -p /media/%s && mount -t %s %s /media/%s 2>/dev/null",
+                mount_tag, mnt_fs, mount_tag, mount_tag);
+            char *msg = NULL;
+            int mrc = guest_exec(dom, cmd, &msg);
+            if (mrc == 0)
+                log_msg(LOG_INFO, "libvirt: auto-mounted '%s' inside guest", mount_tag);
+            else
+                log_msg(LOG_DEBUG, "libvirt: guest mount of '%s' skipped: %s",
+                        mount_tag, msg ? msg : "(no agent)");
+            free(msg);
+        }
     }
     virDomainFree(dom);
     return ret;
