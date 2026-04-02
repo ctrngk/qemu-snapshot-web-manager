@@ -921,7 +921,9 @@ static int lv_list_shared_folders(const char *vm_name,
     if (!dom) return -1;
     conn_unlock();
 
-    char *xml = virDomainGetXMLDesc(dom, 0);
+    /* Use inactive (persistent) config so we see folders added with
+     * VIR_DOMAIN_AFFECT_CONFIG that aren't yet in the live domain. */
+    char *xml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE);
     virDomainFree(dom);
     if (!xml) return -1;
 
@@ -942,7 +944,7 @@ static int lv_list_shared_folders(const char *vm_name,
         block[block_len] = '\0';
 
         int is_virtiofs = (strstr(block, "virtiofs") != NULL);
-        int is_9p = (strstr(block, "9p") != NULL) || (strstr(block, "\"path\"") != NULL);
+        int is_9p = (strstr(block, "9p") != NULL) || (strstr(block, "'path'") != NULL);
 
         if (is_virtiofs || is_9p) {
             char *source = extract_xml_attr(block, "source", "dir");
