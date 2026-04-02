@@ -225,7 +225,7 @@ char *render_vm_list(vm_info_t **vms, int count)
             break;
         case VM_SHUTOFF:
             sb_appendf(&sb,
-                "        <button id=\"btn-vm-start\" class=\"btn btn-xs btn-success\""
+                "        <button class=\"btn btn-xs btn-success btn-vm-start\""
                 " hx-post=\"/api/vms/%s/start\""
                 " hx-target=\"#vm-notification\""
                 " hx-swap=\"innerHTML\""
@@ -234,7 +234,7 @@ char *render_vm_list(vm_info_t **vms, int count)
             break;
         default:
             sb_appendf(&sb,
-                "        <button id=\"btn-vm-start\" class=\"btn btn-xs btn-success\""
+                "        <button class=\"btn btn-xs btn-success btn-vm-start\""
                 " hx-post=\"/api/vms/%s/start\""
                 " hx-target=\"#vm-notification\""
                 " hx-swap=\"innerHTML\""

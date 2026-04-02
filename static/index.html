@@ -290,7 +290,17 @@
         }
 
         // sharedFoldersChanged refresh is handled natively by hx-trigger
-        // on #shared-folders-content (set in selectVm)
+        // on #shared-folders-content (set in selectVm).
+        // A delayed follow-up catches async mount status changes (e.g., automount).
+        document.body.addEventListener('sharedFoldersChanged', function() {
+            if (window.currentVm) {
+                setTimeout(function() {
+                    htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
+                        target: '#shared-folders-content', swap: 'innerHTML'
+                    });
+                }, 1500);
+            }
+        });
 
         /* ── Directory Browser ────────────────────────────────── */
         function openDirBrowser() {

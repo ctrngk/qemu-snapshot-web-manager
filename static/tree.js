@@ -423,7 +423,10 @@ function onNodeClick(event, snap) {
 /* Enable/disable the VM Start button based on snapshot selection.
  * Start only makes sense when viewing the current snapshot. */
 function updateStartButton(isCurrentSnap) {
-    var btn = document.getElementById('btn-vm-start');
+    if (!window.currentVm) return;
+    var vmItem = document.querySelector('.vm-item[data-vm="' + window.currentVm + '"]');
+    if (!vmItem) return;
+    var btn = vmItem.querySelector('.btn-vm-start');
     if (!btn) return;
     if (isCurrentSnap) {
         btn.disabled = false;
