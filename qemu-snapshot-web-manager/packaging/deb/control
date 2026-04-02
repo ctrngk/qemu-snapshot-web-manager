@@ -1,0 +1,11 @@
+Package: qswm
+Version: VERSION_PLACEHOLDER
+Architecture: ARCH_PLACEHOLDER
+Maintainer: ctrngk
+Description: QEMU Snapshot Web Manager
+ A lightweight web UI for managing QEMU/KVM virtual machine snapshots
+ with tree visualization, socket activation, and drop-in configuration.
+Depends: libmicrohttpd12, libvirt0, libjansson4, libsystemd0
+Section: admin
+Priority: optional
+Homepage: https://github.com/ctrngk/qemu-snapshot-web-manager

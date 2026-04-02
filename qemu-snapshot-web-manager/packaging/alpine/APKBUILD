@@ -1,0 +1,24 @@
+# Maintainer: ctrngk
+pkgname=qswm
+pkgver=VERSION_PLACEHOLDER
+pkgrel=1
+pkgdesc="QEMU Snapshot Web Manager"
+url="https://github.com/ctrngk/qemu-snapshot-web-manager"
+arch="x86_64 aarch64"
+license="MIT"
+depends="libmicrohttpd libvirt jansson"
+makedepends="gcc make pkgconf libmicrohttpd-dev libvirt-dev jansson-dev linux-headers"
+source=""
+
+build() {
+    make -C "$startdir/../.." -j$(nproc)
+}
+
+package() {
+    cd "$startdir/../.."
+    install -Dm755 build/qswm "$pkgdir/usr/local/bin/qswm"
+    install -d "$pkgdir/usr/local/share/qswm/static"
+    cp -r static/* "$pkgdir/usr/local/share/qswm/static/"
+    install -Dm755 scripts/idle-check.sh "$pkgdir/usr/local/libexec/qswm/idle-check.sh"
+    install -d "$pkgdir/etc/qswm/conf.d"
+}

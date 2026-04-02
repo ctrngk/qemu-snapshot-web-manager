@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            platform: linux/amd64
+            deb_arch: amd64
+          - arch: aarch64
+            platform: linux/arm64
+            deb_arch: arm64
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build RPM (Fedora)
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD:/src" -w /src \
+            fedora:latest bash -c "
+              dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel rpm-build &&
+              make clean && make -j\$(nproc) &&
+              mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS} &&
+              tar czf rpmbuild/SOURCES/qswm-${{ steps.version.outputs.version }}.tar.gz \
+                --transform 's,^,qemu-snapshot-web-manager-${{ steps.version.outputs.version }}/,' \
+                src/ static/ scripts/ systemd/ Makefile &&
+              rpmbuild --define '_topdir /src/rpmbuild' \
+                       --define '_version ${{ steps.version.outputs.version }}' \
+                       -bb packaging/rpm/qswm.spec &&
+              cp rpmbuild/RPMS/*/*.rpm /src/qswm-${{ steps.version.outputs.version }}.${{ matrix.arch }}.rpm
+            "
+
+      - name: Build DEB (Ubuntu)
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD:/src" -w /src \
+            ubuntu:latest bash -c "
+              apt-get update &&
+              apt-get install -y gcc make pkg-config libmicrohttpd-dev libvirt-dev libjansson-dev libsystemd-dev dpkg-dev &&
+              make clean && make -j\$(nproc) &&
+              bash packaging/deb/build-deb.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
+            "
+
+      - name: Build APK (Alpine)
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD:/src" -w /src \
+            alpine:latest sh -c "
+              apk add gcc make musl-dev pkgconf libmicrohttpd-dev libvirt-dev jansson-dev linux-headers bash &&
+              make clean && make -j\$(nproc) &&
+              bash packaging/alpine/build-apk.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
+            "
+        continue-on-error: true
+
+      - name: Build tarball
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD:/src" -w /src \
+            fedora:latest bash -c "
+              dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel &&
+              make clean && make -j\$(nproc) &&
+              bash packaging/build-tarball.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
+            "
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: |
+            *.rpm
+            *.deb
+            *.apk
+            *.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.rpm
+            dist/*.deb
+            dist/*.apk
+            dist/*.tar.gz
+            install.sh

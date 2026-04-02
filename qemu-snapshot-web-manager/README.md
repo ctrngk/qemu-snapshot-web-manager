@@ -31,6 +31,40 @@
 
 ## Installation
 
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ctrngk/qemu-snapshot-web-manager/main/install.sh | sudo bash
+```
+
+Automatically detects your OS and architecture, downloads the correct package from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases), and installs it.
+
+### Package install
+
+Download the latest package for your distro from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases):
+
+```bash
+# Fedora/RHEL
+sudo dnf install ./qswm-*.rpm
+
+# Ubuntu/Debian
+sudo dpkg -i ./qswm_*.deb
+
+# Alpine
+sudo apk add --allow-untrusted ./qswm-*.apk
+
+# Generic Linux (tarball)
+tar xzf qswm-*-linux-*.tar.gz
+cd qswm-*/
+sudo ./install.sh
+```
+
+Then enable socket activation:
+
+```bash
+sudo systemctl enable --now qswm.socket qswm-idle.timer
+```
+
 ### Build from source (Fedora/RHEL)
 
 ```bash

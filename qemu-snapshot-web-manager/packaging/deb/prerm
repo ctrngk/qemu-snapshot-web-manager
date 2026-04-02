@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+if [ "$1" = "remove" ]; then
+    systemctl disable --now qswm.socket qswm.service qswm-idle.timer 2>/dev/null || true
+fi
