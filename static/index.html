@@ -265,7 +265,7 @@
             // Load shared folders (refreshes on add/remove/mount/unmount AND revert/state changes)
             var sfDiv = document.getElementById('shared-folders-content');
             sfDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/shared-folders');
-            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body, vmStateChanged from:body, every 10s');
+            sfDiv.setAttribute('hx-trigger', 'vmStateChanged from:body, every 10s');
             sfDiv.setAttribute('hx-swap', 'innerHTML');
             htmx.process(sfDiv);
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
@@ -289,16 +289,18 @@
             }
         }
 
-        // sharedFoldersChanged refresh is handled natively by hx-trigger
-        // on #shared-folders-content (set in selectVm).
-        // A delayed follow-up catches async mount status changes (e.g., automount).
+        // When shared folders change (add/remove/mount/unmount), show a brief
+        // loading state then refresh.  The 3 s delay lets the guest finish
+        // mounting before we query findmnt, so the panel shows correct state.
         document.body.addEventListener('sharedFoldersChanged', function() {
             if (window.currentVm) {
+                var sfDiv = document.getElementById('shared-folders-content');
+                sfDiv.innerHTML = '<p class="placeholder">Updating\u2026 <span class="spinner"></span></p>';
                 setTimeout(function() {
                     htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
                         target: '#shared-folders-content', swap: 'innerHTML'
                     });
-                }, 1500);
+                }, 3000);
             }
         });
 
