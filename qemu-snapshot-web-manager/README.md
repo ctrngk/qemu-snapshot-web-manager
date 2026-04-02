@@ -27,7 +27,7 @@
 
 ## Screenshots
 
-<!-- Screenshots coming soon -->
+![QEMU Snapshot Web Manager](docs/images/screenshot.png)
 
 ## Quick Start
 
