@@ -1,9 +1,12 @@
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include <microhttpd.h>
+#include <systemd/sd-daemon.h>
 
 #include "server.h"
 #include "routes.h"
@@ -12,6 +15,20 @@
 static struct MHD_Daemon *daemon_handle;
 static const char        *g_static_dir;
 static const char        *g_libvirt_uri;
+
+static atomic_long last_request_time;
+
+static void touch_activity(void)
+{
+    atomic_store(&last_request_time, (long)time(NULL));
+}
+
+long server_idle_seconds(void)
+{
+    long last = atomic_load(&last_request_time);
+    if (last == 0) return 0;
+    return (long)time(NULL) - last;
+}
 
 /* ------------------------------------------------------------------ */
 /*  helpers                                                           */
@@ -148,10 +165,22 @@ request_handler(void *cls,
     (void)cls;
     (void)version;
 
+    touch_activity();
+
     log_msg(LOG_DEBUG, "%s %s", method, url);
 
     /* API routes */
     if (str_starts_with(url, "/api/")) {
+        if (strcmp(url, "/api/idle-check") == 0) {
+            char body[64];
+            snprintf(body, sizeof(body), "%ld", server_idle_seconds());
+            struct MHD_Response *resp = MHD_create_response_from_buffer(
+                strlen(body), body, MHD_RESPMEM_MUST_COPY);
+            MHD_add_response_header(resp, "Content-Type", "text/plain");
+            enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_OK, resp);
+            MHD_destroy_response(resp);
+            return ret;
+        }
         if (str_eq(method, "GET") && str_eq(url, "/api/ping")) {
             return send_response(connection, MHD_HTTP_OK,
                                  "text/plain", "pong");
@@ -181,6 +210,7 @@ request_handler(void *cls,
 
 int server_start(int port, const char *static_dir, const char *libvirt_uri)
 {
+    touch_activity();
     g_static_dir  = static_dir;
     g_libvirt_uri = libvirt_uri;
 
@@ -200,6 +230,46 @@ int server_start(int port, const char *static_dir, const char *libvirt_uri)
     }
 
     log_msg(LOG_INFO, "HTTP server listening on port %d", port);
+    return 0;
+}
+
+int server_check_activation(void)
+{
+    int n = sd_listen_fds(0);
+    if (n < 0) {
+        log_msg(LOG_ERROR, "sd_listen_fds failed: %d", n);
+        return -1;
+    }
+    if (n == 0)
+        return -1;  /* not socket-activated */
+    if (n > 1)
+        log_msg(LOG_WARN, "Multiple sockets passed (%d), using first", n);
+    return SD_LISTEN_FDS_START; /* fd 3 */
+}
+
+int server_start_fd(int fd, const char *static_dir, const char *libvirt_uri)
+{
+    touch_activity();
+    g_static_dir  = static_dir;
+    g_libvirt_uri = libvirt_uri;
+
+    routes_init();
+
+    daemon_handle = MHD_start_daemon(
+        MHD_USE_INTERNAL_POLLING_THREAD,
+        0,                               /* port ignored when using LISTEN_SOCKET */
+        NULL, NULL,
+        &request_handler, NULL,
+        MHD_OPTION_LISTEN_SOCKET, (MHD_socket)fd,
+        MHD_OPTION_NOTIFY_COMPLETED, &route_request_completed, NULL,
+        MHD_OPTION_END);
+
+    if (!daemon_handle) {
+        log_msg(LOG_ERROR, "MHD_start_daemon failed (socket-activated fd %d)", fd);
+        return -1;
+    }
+
+    log_msg(LOG_INFO, "HTTP server started (socket-activated, fd %d)", fd);
     return 0;
 }
 
