@@ -1,6 +1,5 @@
 # UI Overhaul Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Complete visual redesign with dark/light theme, collapsible sidebar, tabbed detail panel, and macOS-inspired flat design.
 

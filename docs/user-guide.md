@@ -648,7 +648,7 @@ This tells SELinux to allow the guest agent to perform system operations like mo
 ### Guest Sudoers Configuration
 
 If you're using the project's guest dotfiles, the sudoers file at
-`/etc/sudoers.d/copilot-automation` grants passwordless access to **specific
+`/etc/sudoers.d/qswm-automation` grants passwordless access to **specific
 commands only** (not full root access):
 
 - `mount`, `umount` — for mounting/unmounting shared folders

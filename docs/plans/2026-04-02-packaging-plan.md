@@ -1,6 +1,5 @@
 # Cross-Platform Packaging Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add RPM, DEB, APK, and tarball packaging with a GitHub Actions release pipeline and universal install script.
 

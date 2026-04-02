@@ -808,7 +808,7 @@ Unlike the simpler `extract_xml_content()`, this variant captures tag attributes
 
 ### Guest Sudoers Configuration
 
-The project's guest dotfiles include `/etc/sudoers.d/copilot-automation` which grants passwordless access to specific commands only (not `NOPASSWD: ALL`):
+The project's guest dotfiles include `/etc/sudoers.d/qswm-automation` which grants passwordless access to specific commands only (not `NOPASSWD: ALL`):
 
 ```
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/mkdir, /usr/bin/systemctl, /usr/bin/findmnt

@@ -1,6 +1,5 @@
 # Documentation Update Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Update all project documentation (README, User Guide, Developer Guide, Getting Started) to cover features added since the docs were last updated — cross-OS auto-mount, orphan scanner, guest agent help, snapshot editing, save & revert, tree label toggle, NVRAM conversion, resume/force-stop, dirty state tracking, SIGPIPE/thread-safety fixes.
 

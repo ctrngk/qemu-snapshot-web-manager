@@ -1,6 +1,5 @@
 # Socket Activation & Drop-in Config Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add Cockpit-style socket activation, idle auto-shutdown, and drop-in config to qswm.
 
