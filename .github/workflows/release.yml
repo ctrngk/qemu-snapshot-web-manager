@@ -36,35 +36,36 @@ jobs:
       - name: Build RPM (Fedora)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src \
+            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
             fedora:latest bash -c "
               dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel rpm-build &&
               make clean && make -j\$(nproc) &&
-              mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS} &&
-              tar czf rpmbuild/SOURCES/qswm-${{ steps.version.outputs.version }}.tar.gz \
+              mkdir -p /src/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS} &&
+              tar czf /src/rpmbuild/SOURCES/qswm-${{ steps.version.outputs.version }}.tar.gz \
                 --transform 's,^,qemu-snapshot-web-manager-${{ steps.version.outputs.version }}/,' \
                 src/ static/ scripts/ systemd/ Makefile &&
               rpmbuild --define '_topdir /src/rpmbuild' \
                        --define '_version ${{ steps.version.outputs.version }}' \
                        -bb packaging/rpm/qswm.spec &&
-              cp rpmbuild/RPMS/*/*.rpm /src/qswm-${{ steps.version.outputs.version }}.${{ matrix.arch }}.rpm
+              cp /src/rpmbuild/RPMS/*/*.rpm /src/qswm-${{ steps.version.outputs.version }}.${{ matrix.arch }}.rpm
             "
 
       - name: Build DEB (Ubuntu)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src \
+            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
             ubuntu:latest bash -c "
               apt-get update &&
               apt-get install -y gcc make pkg-config libmicrohttpd-dev libvirt-dev libjansson-dev libsystemd-dev dpkg-dev &&
               make clean && make -j\$(nproc) &&
-              bash packaging/deb/build-deb.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
+              bash packaging/deb/build-deb.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }} &&
+              mv *.deb /src/
             "
 
       - name: Build APK (Alpine)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src \
+            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
             alpine:latest sh -c "
               apk add gcc make musl-dev pkgconf libmicrohttpd-dev libvirt-dev jansson-dev linux-headers bash &&
               make clean && make -j\$(nproc) &&
@@ -75,11 +76,12 @@ jobs:
       - name: Build tarball
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src \
+            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
             fedora:latest bash -c "
               dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel &&
               make clean && make -j\$(nproc) &&
-              bash packaging/build-tarball.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
+              bash packaging/build-tarball.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }} &&
+              mv *.tar.gz /src/
             "
 
       - name: Upload artifacts
