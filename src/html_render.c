@@ -551,6 +551,22 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
 
         sb_append(&sb, "        <div class=\"folder-actions\">\n");
 
+        if (folders[i].needs_restart) {
+            /* Folder is in config but not in the live VM */
+            sb_append(&sb,
+                "            <span class=\"badge badge-warning\" title=\"Folder is in VM config but not active. Restart the VM to activate.\">"
+                "\xe2\x9a\xa0\xef\xb8\x8f Restart VM to activate</span>\n");
+            sb_appendf(&sb,
+                "        <button class=\"btn btn-sm btn-danger\"\n"
+                "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
+                "                hx-target=\"#folder-notification-persistent\"\n"
+                "                hx-swap=\"innerHTML\"\n"
+                "                hx-confirm=\"Detach shared folder '%s'? (Files on host are not deleted)\">\n"
+                "            \xe2\x9c\x96 Detach\n"
+                "        </button>\n",
+                esc_vm, esc_tag, esc_tag);
+        } else {
+
         /* Mount button */
         if (mounted == 1) {
             sb_append(&sb,
@@ -611,6 +627,7 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
             "            \xe2\x9c\x96 Detach\n"
             "        </button>\n",
             esc_vm, esc_tag, esc_tag);
+        } /* end else (not needs_restart) */
         sb_append(&sb, "        </div>\n");
         sb_append(&sb, "    </div>\n");
 

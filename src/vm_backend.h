@@ -27,6 +27,7 @@ typedef struct {
     char *fs_type;        /* "virtiofs" or "9p" */
     int read_only;
     int mounted;          /* 1 if currently mounted in guest, 0 otherwise, -1 unknown */
+    int needs_restart;    /* 1 if folder is in config but not in live VM */
 } shared_folder_t;
 
 /* ─── Guest OS types (detected via guest agent) ─── */

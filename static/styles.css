@@ -716,6 +716,12 @@ button:disabled, .btn:disabled {
     color: var(--badge-unmounted-text);
 }
 
+.badge-warning {
+    background: var(--badge-readonly-bg);
+    color: var(--badge-readonly-text);
+    font-size: 0.8rem;
+}
+
 /* ===== Auto-mount status bar ===== */
 .automount-status {
     display: flex;

@@ -979,6 +979,30 @@ static int lv_list_shared_folders(const char *vm_name,
     }
 
     free(xml);
+
+    /* Check which folders are actually in the live VM (if running).
+     * Folders only in the persistent config need a VM restart. */
+    virDomainPtr dom2 = lv_lookup_domain_locked(vm_name);
+    if (dom2) {
+        conn_unlock();
+        int state = 0, reason = 0;
+        virDomainGetState(dom2, &state, &reason, 0);
+        if (state == VIR_DOMAIN_RUNNING || state == VIR_DOMAIN_PAUSED) {
+            char *live_xml = virDomainGetXMLDesc(dom2, 0);
+            if (live_xml) {
+                for (int i = 0; i < n; i++) {
+                    char needle[256];
+                    snprintf(needle, sizeof(needle), "dir='%s'", folders[i].mount_tag);
+                    if (!strstr(live_xml, needle)) {
+                        folders[i].needs_restart = 1;
+                    }
+                }
+                free(live_xml);
+            }
+        }
+        virDomainFree(dom2);
+    }
+
     *out   = folders;
     *count = n;
     return 0;
