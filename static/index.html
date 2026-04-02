@@ -262,10 +262,10 @@
                 target: '#orphan-check', swap: 'innerHTML'
             });
 
-            // Load shared folders (refreshes on add/remove/mount/unmount events)
+            // Load shared folders (refreshes on add/remove/mount/unmount AND revert/state changes)
             var sfDiv = document.getElementById('shared-folders-content');
             sfDiv.setAttribute('hx-get', '/api/vms/' + vmName + '/shared-folders');
-            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body');
+            sfDiv.setAttribute('hx-trigger', 'sharedFoldersChanged from:body, vmStateChanged from:body');
             sfDiv.setAttribute('hx-swap', 'innerHTML');
             htmx.process(sfDiv);
             htmx.ajax('GET', '/api/vms/' + vmName + '/shared-folders', {
