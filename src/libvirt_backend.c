@@ -1574,18 +1574,8 @@ static int lv_check_mount_status(const char *vm_name,
 /* ------------------------------------------------------------------ */
 
 /* Guest OS types for auto-mount dispatch */
-typedef enum {
-    GUEST_OS_LINUX_SYSTEMD,
-    GUEST_OS_LINUX_OPENRC,
-    GUEST_OS_LINUX_OTHER,
-    GUEST_OS_WINDOWS,
-    GUEST_OS_FREEBSD,
-    GUEST_OS_MACOS,
-    GUEST_OS_UNKNOWN
-} guest_os_t;
-
 /* Detect guest OS using guest-agent osinfo or binary probing */
-static guest_os_t detect_guest_os(virDomainPtr dom)
+static guest_os_t detect_guest_os_dom(virDomainPtr dom)
 {
     char *msg = NULL;
     int rc;
@@ -2101,7 +2091,7 @@ static int lv_setup_automount(const char *vm_name, char **out_msg)
     }
 
     /* Detect guest OS */
-    guest_os_t os = detect_guest_os(dom);
+    guest_os_t os = detect_guest_os_dom(dom);
     log_msg(LOG_INFO, "Detected guest OS for %s: %s", vm_name, guest_os_name(os));
 
     int rc;
@@ -2497,6 +2487,24 @@ int lv_cleanup_orphan_snapshots(const char *vm_name)
 /*  vtable                                                            */
 /* ------------------------------------------------------------------ */
 
+/* Public wrapper: detect guest OS by VM name */
+static guest_os_t lv_detect_guest_os(const char *vm_name)
+{
+    virDomainPtr dom = lv_lookup_domain_locked(vm_name);
+    if (!dom) return GUEST_OS_UNKNOWN;
+    conn_unlock();
+
+    virDomainInfo info;
+    if (virDomainGetInfo(dom, &info) != 0 || info.state != VIR_DOMAIN_RUNNING) {
+        virDomainFree(dom);
+        return GUEST_OS_UNKNOWN;
+    }
+
+    guest_os_t os = detect_guest_os_dom(dom);
+    virDomainFree(dom);
+    return os;
+}
+
 static vm_backend_t libvirt_be = {
     .name                = "libvirt",
     .connect             = lv_connect,
@@ -2522,6 +2530,7 @@ static vm_backend_t libvirt_be = {
     .check_mount_status    = lv_check_mount_status,
     .check_automount_status = lv_check_automount_status,
     .setup_automount        = lv_setup_automount,
+    .detect_guest_os        = lv_detect_guest_os,
 };
 
 vm_backend_t *libvirt_backend_get(void)

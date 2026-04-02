@@ -841,7 +841,8 @@ char *render_orphan_warning(const char *vm_name, char **orphan_names, int count)
 /*  render_guest_agent_help                                           */
 /* ------------------------------------------------------------------ */
 
-char *render_guest_agent_help(const char *operation, const char *detail)
+char *render_guest_agent_help(const char *operation, const char *detail,
+                             guest_os_t detected_os)
 {
     strbuf_t sb;
     sb_init(&sb, 4096);
@@ -858,12 +859,26 @@ char *render_guest_agent_help(const char *operation, const char *detail)
         sb_appendf(&sb, "<br><code style=\"font-size:0.85em\">%s</code>", esc_detail);
     }
 
+    /* Determine which sections to auto-expand based on detected OS */
+    int linux_open = (detected_os == GUEST_OS_LINUX_SYSTEMD ||
+                      detected_os == GUEST_OS_LINUX_OPENRC ||
+                      detected_os == GUEST_OS_LINUX_OTHER);
+    int windows_open = (detected_os == GUEST_OS_WINDOWS);
+    int freebsd_open = (detected_os == GUEST_OS_FREEBSD);
+    /* If unknown, show all collapsed */
+
+    if (esc_detail) {
+        sb_appendf(&sb, "<br><code style=\"font-size:0.85em\">%s</code>", esc_detail);
+    }
+
     sb_append(&sb,
         "<br><br>"
         "  This feature uses the <strong>QEMU Guest Agent</strong> to run commands "
         "inside the VM. The guest agent must be installed and running in the guest OS.\n"
-        "  <br><br>\n"
-        "  <details open>\n"
+        "  <br><br>\n");
+
+    sb_appendf(&sb, "  <details%s>\n", linux_open ? " open" : "");
+    sb_append(&sb,
         "    <summary><strong>\xf0\x9f\x90\xa7 Linux</strong></summary>\n"
         "    <div style=\"padding:8px 0 4px 16px\">\n"
         "      <details>\n"
@@ -893,16 +908,20 @@ char *render_guest_agent_help(const char *operation, const char *detail)
         "sudo systemctl enable --now qemu-guest-agent</pre>\n"
         "      </details>\n"
         "    </div>\n"
-        "  </details>\n"
-        "  <details>\n"
+        "  </details>\n");
+
+    sb_appendf(&sb, "  <details%s>\n", windows_open ? " open" : "");
+    sb_append(&sb,
         "    <summary><strong>\xf0\x9f\xaa\x9f Windows</strong></summary>\n"
         "    <div style=\"padding:8px 0 4px 16px\">\n"
         "      Download and install the <a href=\"https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/\" "
         "target=\"_blank\">VirtIO guest tools (virtio-win)</a>.<br>\n"
         "      The QEMU Guest Agent is included in the installer.\n"
         "    </div>\n"
-        "  </details>\n"
-        "  <details>\n"
+        "  </details>\n");
+
+    sb_appendf(&sb, "  <details%s>\n", freebsd_open ? " open" : "");
+    sb_append(&sb,
         "    <summary><strong>\xf0\x9f\x98\x88 FreeBSD</strong></summary>\n"
         "    <div style=\"padding:8px 0 4px 16px\">\n"
         "      <pre style=\"margin:4px 0\">pkg install qemu-guest-agent\n"

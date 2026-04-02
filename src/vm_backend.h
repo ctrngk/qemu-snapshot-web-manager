@@ -29,6 +29,17 @@ typedef struct {
     int mounted;          /* 1 if currently mounted in guest, 0 otherwise, -1 unknown */
 } shared_folder_t;
 
+/* ─── Guest OS types (detected via guest agent) ─── */
+typedef enum {
+    GUEST_OS_LINUX_SYSTEMD,
+    GUEST_OS_LINUX_OPENRC,
+    GUEST_OS_LINUX_OTHER,
+    GUEST_OS_WINDOWS,
+    GUEST_OS_FREEBSD,
+    GUEST_OS_MACOS,
+    GUEST_OS_UNKNOWN
+} guest_os_t;
+
 /* ─── Backend vtable ─── */
 typedef struct vm_backend {
     const char *name;   /* "libvirt" or "utm" */
@@ -82,6 +93,9 @@ typedef struct vm_backend {
 
     /* Auto-mount: install auto-mount systemd service in guest */
     int  (*setup_automount)(const char *vm_name, char **out_msg);
+
+    /* Guest OS detection via guest agent */
+    guest_os_t (*detect_guest_os)(const char *vm_name);
 } vm_backend_t;
 
 /* ─── Backend registry ─── */

@@ -53,6 +53,7 @@ char *render_orphan_warning(const char *vm_name, char **orphan_names, int count)
  * operation is the action that failed (e.g., "mount", "unmount", "auto-mount setup").
  * detail is the specific error from libvirt (may be NULL).
  * Returns malloc'd HTML string. */
-char *render_guest_agent_help(const char *operation, const char *detail);
+char *render_guest_agent_help(const char *operation, const char *detail,
+                             guest_os_t detected_os);
 
 #endif
