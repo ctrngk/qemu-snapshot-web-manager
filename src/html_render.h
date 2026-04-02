@@ -56,4 +56,16 @@ char *render_orphan_warning(const char *vm_name, char **orphan_names, int count)
 char *render_guest_agent_help(const char *operation, const char *detail,
                              guest_os_t detected_os);
 
+/* Inline HTML explanation for why Stop & Start is needed (not guest reboot).
+ * Used in shared-memory prompt, post-enable success, and needs_restart badge. */
+#define STOP_START_EXPLANATION_HTML \
+    "<div style=\"margin-top:6px;padding:6px 10px;background:var(--color-bg-secondary,#f6f8fa);" \
+    "border-radius:4px;font-size:0.85em;line-height:1.5\">" \
+    "<strong>Why not just reboot from inside the VM?</strong><br>" \
+    "\xe2\x80\xa2 <strong>Guest reboot</strong> only restarts the OS. " \
+    "The QEMU process keeps running with its original hardware config.<br>" \
+    "\xe2\x80\xa2 <strong>Stop &amp; Start</strong> (from this web UI) destroys the QEMU " \
+    "process and creates a new one with the latest config &mdash; like powering " \
+    "off the hardware and turning it back on with new hardware installed.</div>"
+
 #endif
