@@ -2,8 +2,8 @@ CC      ?= gcc
 CFLAGS  := -Wall -Wextra -std=c11 -D_GNU_SOURCE
 LDFLAGS := -lpthread
 
-PKG_CFLAGS := $(shell pkg-config --cflags libmicrohttpd libvirt jansson)
-PKG_LIBS   := $(shell pkg-config --libs   libmicrohttpd libvirt jansson) -lvirt-qemu
+PKG_CFLAGS := $(shell pkg-config --cflags libmicrohttpd libvirt jansson libsystemd)
+PKG_LIBS   := $(shell pkg-config --libs   libmicrohttpd libvirt jansson libsystemd) -lvirt-qemu
 
 SRCDIR  := src
 BUILDDIR:= build
@@ -42,9 +42,29 @@ install: all
 	install -Dm755 $(TARGET) /usr/local/bin/qswm
 	install -d /usr/local/share/qswm/static
 	cp -r static/* /usr/local/share/qswm/static/ 2>/dev/null || true
-	if [ -f systemd/qswm.service ]; then \
-		install -Dm644 systemd/qswm.service /etc/systemd/system/qswm.service; \
-	fi
+	install -d /etc/qswm/conf.d
+	install -Dm755 scripts/idle-check.sh /usr/local/libexec/qswm/idle-check.sh
+	install -Dm644 systemd/qswm.socket /etc/systemd/system/qswm.socket
+	install -Dm644 systemd/qswm.service /etc/systemd/system/qswm.service
+	install -Dm644 systemd/qswm-idle.timer /etc/systemd/system/qswm-idle.timer
+	install -Dm644 systemd/qswm-idle-check.service /etc/systemd/system/qswm-idle-check.service
+	systemctl daemon-reload
+	@echo ""
+	@echo "Installed. Enable socket activation with:"
+	@echo "  sudo systemctl enable --now qswm.socket qswm-idle.timer"
+
+uninstall:
+	systemctl disable --now qswm.socket qswm.service qswm-idle.timer 2>/dev/null || true
+	rm -f /usr/local/bin/qswm
+	rm -rf /usr/local/share/qswm
+	rm -f /usr/local/libexec/qswm/idle-check.sh
+	rmdir /usr/local/libexec/qswm 2>/dev/null || true
+	rm -f /etc/systemd/system/qswm.socket
+	rm -f /etc/systemd/system/qswm.service
+	rm -f /etc/systemd/system/qswm-idle.timer
+	rm -f /etc/systemd/system/qswm-idle-check.service
+	systemctl daemon-reload
+	@echo "Uninstalled."
 
 test:
 	@for t in tests/*.c; do \
@@ -56,4 +76,4 @@ test:
 		./$(BUILDDIR)/$$name; \
 	done
 
-.PHONY: all debug clean run install test
+.PHONY: all debug clean run install uninstall test

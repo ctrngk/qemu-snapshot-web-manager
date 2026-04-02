@@ -1,0 +1,10 @@
+[Unit]
+Description=QEMU Snapshot Web Manager Socket
+
+[Socket]
+ListenStream=9091
+Accept=no
+NoDelay=yes
+
+[Install]
+WantedBy=sockets.target

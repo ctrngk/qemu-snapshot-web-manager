@@ -1,0 +1,7 @@
+[Unit]
+Description=Check qswm idle state and stop if inactive
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/qswm/idle-check.sh
+Environment=QSWM_IDLE_TIMEOUT=600

@@ -5,6 +5,7 @@
 #include <getopt.h>
 
 #include "util.h"
+#include "config.h"
 #include "libvirt_backend.h"
 #include "vm_backend.h"
 
@@ -32,9 +33,13 @@ static void print_usage(const char *prog)
 
 int main(int argc, char *argv[])
 {
-    int port = 9091;
-    const char *static_dir = "./static";
-    const char *libvirt_uri = "qemu:///system";
+    qswm_config_t cfg;
+    config_defaults(&cfg);
+    config_load_dropins(&cfg, "/etc/qswm/conf.d");
+
+    int port = cfg.port;
+    const char *static_dir = cfg.static_dir;
+    const char *libvirt_uri = cfg.uri;
 
     static struct option long_opts[] = {
         { "port",       required_argument, NULL, 'p' },
@@ -91,7 +96,17 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (server_start(port, static_dir, libvirt_uri) != 0) {
+    /* Try socket activation first */
+    int act_fd = server_check_activation();
+    int rc;
+    if (act_fd >= 0) {
+        log_msg(LOG_INFO, "Socket activation detected (fd %d)", act_fd);
+        rc = server_start_fd(act_fd, static_dir, libvirt_uri);
+    } else {
+        rc = server_start(port, static_dir, libvirt_uri);
+    }
+
+    if (rc != 0) {
         log_msg(LOG_ERROR, "Failed to start server");
         be->disconnect();
         return 1;
