@@ -1258,6 +1258,16 @@ static int lv_remove_shared_folder(const char *vm_name, const char *mount_tag)
         flags = VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_AFFECT_CONFIG;
         log_msg(LOG_WARN, "libvirt: hot-removing shared folder '%s' from running VM '%s'",
                 mount_tag, vm_name);
+
+        /* Unmount inside guest before detaching the device */
+        char umount_cmd[512];
+        snprintf(umount_cmd, sizeof(umount_cmd),
+            "umount /media/%s 2>/dev/null; "
+            "sed -i '/^%s$/d' /etc/qemu-no-automount 2>/dev/null; true",
+            mount_tag, mount_tag);
+        char *umsg = NULL;
+        guest_exec(dom, umount_cmd, &umsg);
+        free(umsg);
     } else {
         flags = VIR_DOMAIN_AFFECT_CONFIG;
     }
@@ -1455,6 +1465,15 @@ static int lv_mount_shared_folder(const char *vm_name, const char *mount_tag,
         return -1;
     }
 
+    /* Remove from automount skip list so automount won't fight the mount */
+    char skip_cmd[512];
+    snprintf(skip_cmd, sizeof(skip_cmd),
+        "sed -i '/^%s$/d' /etc/qemu-no-automount 2>/dev/null; true",
+        mount_tag);
+    char *skip_msg = NULL;
+    guest_exec(dom, skip_cmd, &skip_msg);
+    free(skip_msg);
+
     /* Build mount command with full paths (guest agent has minimal PATH) */
     const char *fst = (fs_type && strlen(fs_type) > 0) ? fs_type : "virtiofs";
     char cmd[512];
@@ -1495,6 +1514,36 @@ static int lv_unmount_shared_folder(const char *vm_name, const char *mount_tag)
         snprintf(lv_last_error, sizeof(lv_last_error), "VM is not running");
         return -1;
     }
+
+    /* Add to automount skip list FIRST, so the timer won't re-mount */
+    char skip_cmd[512];
+    snprintf(skip_cmd, sizeof(skip_cmd),
+        "grep -qxF '%s' /etc/qemu-no-automount 2>/dev/null || "
+        "echo '%s' >> /etc/qemu-no-automount",
+        mount_tag, mount_tag);
+    char *skip_msg = NULL;
+    guest_exec(dom, skip_cmd, &skip_msg);
+    free(skip_msg);
+
+    /* Update the automount script to respect the skip file (idempotent) */
+    guest_exec(dom,
+        "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
+        "#!/bin/bash\n"
+        "SKIP=/etc/qemu-no-automount\n"
+        "for tag_path in /sys/fs/virtiofs/*/tag; do\n"
+        "    [ -e \"$tag_path\" ] || continue\n"
+        "    TAG=$(cat \"$tag_path\")\n"
+        "    if [ -f \"$SKIP\" ] && grep -qxF \"$TAG\" \"$SKIP\"; then continue; fi\n"
+        "    MP=\"/media/$TAG\"\n"
+        "    mkdir -p \"$MP\"\n"
+        "    if ! mountpoint -q \"$MP\"; then\n"
+        "        mount -t virtiofs \"$TAG\" \"$MP\" >/dev/null 2>&1\n"
+        "    fi\n"
+        "done\n"
+        "SCRIPT\n"
+        "chmod +x /usr/local/bin/qemu-automount",
+        &skip_msg);
+    free(skip_msg); skip_msg = NULL;
 
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "/usr/bin/umount /media/%s", mount_tag);
@@ -1766,9 +1815,11 @@ static int setup_automount_systemd(virDomainPtr dom, char **out_msg)
     rc = guest_exec(dom,
         "cat > /usr/local/bin/qemu-automount << 'SCRIPT'\n"
         "#!/bin/bash\n"
+        "SKIP=/etc/qemu-no-automount\n"
         "for tag_path in /sys/fs/virtiofs/*/tag; do\n"
         "    [ -e \"$tag_path\" ] || continue\n"
         "    TAG=$(cat \"$tag_path\")\n"
+        "    if [ -f \"$SKIP\" ] && grep -qxF \"$TAG\" \"$SKIP\"; then continue; fi\n"
         "    MOUNT_POINT=\"/media/$TAG\"\n"
         "    mkdir -p \"$MOUNT_POINT\"\n"
         "    if ! mountpoint -q \"$MOUNT_POINT\"; then\n"
