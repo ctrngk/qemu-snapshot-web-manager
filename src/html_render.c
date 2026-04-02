@@ -554,8 +554,8 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         if (folders[i].needs_restart) {
             /* Folder is in config but not in the live VM */
             sb_append(&sb,
-                "            <span class=\"badge badge-warning\" title=\"Folder is saved in VM config but not active in the running VM. Use Stop &amp; Start (not guest reboot) to load the new config.\">"
-                "\xe2\x9a\xa0\xef\xb8\x8f Stop &amp; Start VM to activate</span>\n");
+                "            <span class=\"badge badge-warning\" title=\"Folder is saved in VM config but not active in the running VM. Use the Stop and Start buttons in this web UI (not guest reboot) to load the new config.\">"
+                "\xe2\x9a\xa0\xef\xb8\x8f Stop &amp; Start from web UI to activate</span>\n");
             sb_appendf(&sb,
                 "        <button class=\"btn btn-sm btn-danger\"\n"
                 "                hx-delete=\"/api/vms/%s/shared-folders/%s\"\n"
