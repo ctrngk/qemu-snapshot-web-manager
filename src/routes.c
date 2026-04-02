@@ -1165,7 +1165,7 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
         /* Folder saved to config but VM needs restart for shared memory */
         char *html = render_success(
             "Shared folder saved to VM config. "
-            "\xe2\x9a\xa0\xef\xb8\x8f Restart the VM for it to take effect "
+            "\xe2\x9a\xa0\xef\xb8\x8f Use Stop &amp; Start (not guest reboot) to activate "
             "(VirtioFS requires shared memory, which was just enabled).");
         enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
         free(html);
