@@ -36,7 +36,7 @@ jobs:
       - name: Build RPM (Fedora)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
+            -v "$PWD:/src" -w /src \
             fedora:latest bash -c "
               dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel rpm-build &&
               make clean && make -j\$(nproc) &&
@@ -53,19 +53,18 @@ jobs:
       - name: Build DEB (Ubuntu)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
+            -v "$PWD:/src" -w /src \
             ubuntu:latest bash -c "
               apt-get update &&
               apt-get install -y gcc make pkg-config libmicrohttpd-dev libvirt-dev libjansson-dev libsystemd-dev dpkg-dev &&
               make clean && make -j\$(nproc) &&
-              bash packaging/deb/build-deb.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }} &&
-              mv *.deb /src/
+              bash packaging/deb/build-deb.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
             "
 
       - name: Build APK (Alpine)
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
+            -v "$PWD:/src" -w /src \
             alpine:latest sh -c "
               apk add gcc make musl-dev pkgconf libmicrohttpd-dev libvirt-dev jansson-dev linux-headers bash &&
               make clean && make -j\$(nproc) &&
@@ -76,12 +75,11 @@ jobs:
       - name: Build tarball
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src/qemu-snapshot-web-manager \
+            -v "$PWD:/src" -w /src \
             fedora:latest bash -c "
               dnf install -y gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel &&
               make clean && make -j\$(nproc) &&
-              bash packaging/build-tarball.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }} &&
-              mv *.tar.gz /src/
+              bash packaging/build-tarball.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
             "
 
       - name: Upload artifacts
