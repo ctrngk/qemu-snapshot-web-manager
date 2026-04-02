@@ -554,7 +554,9 @@ char *render_shared_folders(const char *vm_name, shared_folder_t *folders, int c
         if (folders[i].needs_restart) {
             /* Folder is in config but not in the live VM */
             sb_append(&sb,
-                "            <span class=\"badge badge-warning\" title=\"Folder is saved in VM config but not active in the running VM. Use the Stop and Start buttons in this web UI (not guest reboot) to load the new config.\">"
+                "            <span class=\"badge badge-warning\" title=\"Folder is saved in VM config but not active in the running VM. "
+                "Rebooting from inside the guest only restarts the OS — the QEMU process keeps its original config. "
+                "Stop &amp; Start kills the QEMU process and creates a new one with the latest config.\">"
                 "\xe2\x9a\xa0\xef\xb8\x8f Stop &amp; Start from web UI to activate</span>\n");
             sb_appendf(&sb,
                 "        <button class=\"btn btn-sm btn-danger\"\n"
