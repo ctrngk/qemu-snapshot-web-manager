@@ -31,17 +31,39 @@
 
 ## Installation
 
-### One-line install
+Three ways to install. All methods set up **socket activation** — the service starts on first visit to port 9091 and auto-stops after 10 minutes idle.
+
+### Method A: Quick Install (Linux only)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ctrngk/qemu-snapshot-web-manager/main/install.sh | sudo bash
 ```
 
-Automatically detects your OS and architecture, downloads the correct package from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases), and installs it.
+Auto-detects your distro and CPU architecture, downloads the right package from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases), and installs it.
 
-### Package install
+> **Note:** This script requires Linux with `/etc/os-release`. macOS is not supported — use Method C.
 
-Download the latest package for your distro from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases):
+**Uninstall (Method A):**
+
+```bash
+# Fedora/RHEL
+sudo dnf remove qswm
+
+# Ubuntu/Debian
+sudo apt remove qswm
+
+# Alpine
+sudo apk del qswm
+
+# If installed via tarball
+sudo /usr/local/share/qswm/uninstall.sh
+```
+
+---
+
+### Method B: Manual Package Install (Linux only)
+
+Download the package for your distro from [GitHub Releases](https://github.com/ctrngk/qemu-snapshot-web-manager/releases):
 
 ```bash
 # Fedora/RHEL
@@ -65,99 +87,45 @@ Then enable socket activation:
 sudo systemctl enable --now qswm.socket qswm-idle.timer
 ```
 
-### Build from source (Fedora/RHEL)
+**Uninstall (Method B):** Same as Method A — use your package manager or the tarball's uninstall script.
+
+---
+
+### Method C: Build from Source (Linux & macOS)
 
 ```bash
+# Install dependencies
+# Fedora/RHEL:
 sudo dnf install gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel
+# macOS:
+brew install libmicrohttpd libvirt jansson pkg-config
+
+# Build
 git clone https://github.com/ctrngk/qemu-snapshot-web-manager.git
 cd qemu-snapshot-web-manager
 make
-```
 
-### System-wide install
-
-```bash
+# Install system-wide (Linux)
 sudo make install
 sudo systemctl enable --now qswm.socket qswm-idle.timer
 ```
 
-The `make install` target installs:
-- `qswm` binary → `/usr/local/bin/qswm`
+`make install` places:
+- Binary → `/usr/local/bin/qswm`
 - Static assets → `/usr/local/share/qswm/static/`
-- Systemd units → `/etc/systemd/system/qswm.{socket,service}`, idle timer + check
+- Systemd units → `/etc/systemd/system/`
 - Idle check script → `/usr/local/libexec/qswm/idle-check.sh`
 - Config directory → `/etc/qswm/conf.d/`
 
-**Socket activation:** The service starts automatically on the first browser visit to port 9091, and stops after 10 minutes of inactivity. No resources are used when idle.
+> **macOS:** Socket activation and idle auto-shutdown are Linux-only (systemd). On macOS, run the binary directly: `sudo ./build/qswm`. See [docs/user-guide.md](docs/user-guide.md) for launchd setup.
 
-### Uninstall
+**Uninstall (Method C):**
 
 ```bash
 sudo make uninstall
 ```
 
-This disables all systemd units, removes the binary, static files, and systemd unit files. Your config files in `/etc/qswm/conf.d/` are preserved.
-
-### Prerequisites for shared folder mounting
-
-To mount/unmount shared folders inside VMs, install the QEMU guest agent in the guest OS:
-
-```bash
-# Fedora/RHEL
-sudo dnf install qemu-guest-agent
-sudo systemctl enable --now qemu-guest-agent
-
-# Debian/Ubuntu
-sudo apt install qemu-guest-agent
-sudo systemctl enable --now qemu-guest-agent
-```
-
-### macOS (experimental)
-
-```bash
-brew install libmicrohttpd libvirt jansson pkg-config
-make
-```
-
-To launch automatically on macOS, create a launchd plist:
-
-```bash
-sudo tee /Library/LaunchDaemons/com.qswm.plist <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.qswm</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/qswm</string>
-        <string>--port</string>
-        <string>9091</string>
-        <string>--static-dir</string>
-        <string>/usr/local/share/qswm/static</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-    <key>Sockets</key>
-    <dict>
-        <key>Listeners</key>
-        <dict>
-            <key>SockServiceName</key>
-            <string>9091</string>
-            <key>SockType</key>
-            <string>stream</string>
-        </dict>
-    </dict>
-</dict>
-</plist>
-EOF
-sudo launchctl load /Library/LaunchDaemons/com.qswm.plist
-```
-
-> **Note:** macOS socket activation uses launchd instead of systemd. The idle auto-shutdown timer is Linux-only; on macOS the service runs until manually stopped or the system reboots.
+Disables systemd units and removes all installed files. Config files in `/etc/qswm/conf.d/` are preserved.
 
 ## Usage
 
@@ -315,7 +283,6 @@ make clean      # remove build artifacts
 ### Project structure
 
 ```
-qemu-snapshot-web-manager/
 ├── src/
 │   ├── main.c            # entry point, argument parsing, signal handlers
 │   ├── server.c/.h       # HTTP server (libmicrohttpd), static file serving, MIME detection
