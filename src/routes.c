@@ -1115,6 +1115,8 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
         snprintf(msg, sizeof(msg),
             "\xe2\x9a\xa0\xef\xb8\x8f VirtioFS requires <strong>shared memory</strong> "
             "to be enabled on this VM. This modifies the VM configuration."
+            "<br><small>A <strong>Stop &amp; Start</strong> from the web UI will be "
+            "required afterwards to activate the change.</small>"
             "<div style=\"margin-top:8px\">"
             "<form hx-post=\"/api/vms/%s/shared-folders\""
             " hx-target=\"#folder-notification-persistent\""
@@ -1163,12 +1165,24 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
     }
     if (rc == 1) {
         /* Folder saved to config but VM needs restart for shared memory */
-        char *html = render_success(
-            "Shared folder saved to VM config. "
-            "\xe2\x9a\xa0\xef\xb8\x8f Use Stop &amp; Start from this web UI to activate "
-            "(VirtioFS requires shared memory, which was just enabled).");
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
-        free(html);
+        char *esc_vm = html_escape(vm_name);
+        char *msg_html = str_fmt(
+            "<div class=\"alert alert-success\">"
+            "\xe2\x9c\x93 Shared folder saved to VM config."
+            "<br>\xe2\x9a\xa0\xef\xb8\x8f <strong>Stop &amp; Start</strong> the VM "
+            "from this web UI to activate (shared memory was just enabled)."
+            "<div style=\"margin-top:8px\">"
+            "<button class=\"btn btn-sm btn-danger\""
+            " hx-post=\"/api/vms/%s/stop\""
+            " hx-target=\"#vm-notification\""
+            " hx-swap=\"innerHTML\""
+            " title=\"Stop VM first, then start it\">"
+            "\xe2\x96\xa0 Stop</button> "
+            "</div></div>",
+            esc_vm);
+        free(esc_vm);
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, msg_html, "sharedFoldersChanged");
+        free(msg_html);
         return ret;
     }
     char *html = render_success("Shared folder added");
