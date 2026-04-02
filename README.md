@@ -263,13 +263,14 @@ Boot → qswm.socket (listening, zero resources)
 # Install dependencies (Fedora)
 sudo dnf install gcc make pkg-config libmicrohttpd-devel libvirt-devel jansson-devel systemd-devel
 
-# Build and run locally (no install needed)
-make
-sudo ./build/qswm --port 9091 --static-dir ./static
+# Start dev server (auto-rebuilds on file changes)
+./scripts/dev.sh
 
-# Open browser
-xdg-open http://localhost:9091
+# Stop dev server
+sudo ./scripts/dev-stop.sh
 ```
+
+The dev server builds in debug mode, watches `src/` and `static/` for changes, and auto-rebuilds. Opens at http://localhost:9091.
 
 ### Build targets
 
