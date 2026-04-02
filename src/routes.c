@@ -1183,12 +1183,12 @@ static enum MHD_Result handle_add_shared_folder(struct MHD_Connection *conn,
             "</div></div>",
             esc_vm);
         free(esc_vm);
-        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, msg_html, "sharedFoldersChanged");
+        enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, msg_html, "sharedFoldersUpdating");
         free(msg_html);
         return ret;
     }
     char *html = render_success("Shared folder added");
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersUpdating");
     free(html);
     return ret;
 }
@@ -1255,7 +1255,7 @@ static enum MHD_Result handle_mount_shared_folder(struct MHD_Connection *conn,
     char msg[128];
     snprintf(msg, sizeof(msg), "Mounted successfully at /media/%s", mount_tag);
     char *html = render_success(msg);
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersUpdating");
     free(html);
     return ret;
 }
@@ -1331,7 +1331,7 @@ static enum MHD_Result handle_automount_setup(struct MHD_Connection *conn,
     }
 
     char *html = render_success("Auto-mount service installed and started in guest VM");
-    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersChanged");
+    enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "sharedFoldersUpdating");
     free(html);
     free(msg);
     return ret;

@@ -289,10 +289,12 @@
             }
         }
 
-        // When shared folders change (add/remove/mount/unmount), show a brief
-        // loading state then refresh.  The 3 s delay lets the guest finish
-        // mounting before we query findmnt, so the panel shows correct state.
-        document.body.addEventListener('sharedFoldersChanged', function() {
+        // Shared folder operations use two trigger types:
+        // - sharedFoldersUpdating (add/mount/automount): spinner + 3s delay
+        //   so the guest has time to mount before we query status
+        // - sharedFoldersChanged (unmount/detach): immediate refresh since
+        //   the operation is already complete server-side
+        document.body.addEventListener('sharedFoldersUpdating', function() {
             if (window.currentVm) {
                 var sfDiv = document.getElementById('shared-folders-content');
                 sfDiv.innerHTML = '<p class="placeholder">Updating\u2026 <span class="spinner"></span></p>';
@@ -301,6 +303,13 @@
                         target: '#shared-folders-content', swap: 'innerHTML'
                     });
                 }, 3000);
+            }
+        });
+        document.body.addEventListener('sharedFoldersChanged', function() {
+            if (window.currentVm) {
+                htmx.ajax('GET', '/api/vms/' + window.currentVm + '/shared-folders', {
+                    target: '#shared-folders-content', swap: 'innerHTML'
+                });
             }
         });
 
