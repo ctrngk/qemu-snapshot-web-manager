@@ -1,6 +1,6 @@
 #!/bin/bash
 # Check if qswm is idle and stop it if so.
-# Called by qswm-idle-check.service via qswm-idle.timer.
+# Called by qswm-idle.service via qswm-idle.timer.
 
 IDLE_THRESHOLD="${QSWM_IDLE_TIMEOUT:-600}"
 ENDPOINT="http://127.0.0.1:9091/api/idle-check"

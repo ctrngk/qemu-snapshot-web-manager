@@ -15,7 +15,7 @@ install -Dm755 scripts/idle-check.sh "$STAGE/libexec/idle-check.sh"
 install -Dm644 systemd/qswm.socket "$STAGE/systemd/qswm.socket"
 install -Dm644 systemd/qswm.service "$STAGE/systemd/qswm.service"
 install -Dm644 systemd/qswm-idle.timer "$STAGE/systemd/qswm-idle.timer"
-install -Dm644 systemd/qswm-idle-check.service "$STAGE/systemd/qswm-idle-check.service"
+install -Dm644 systemd/qswm-idle.service "$STAGE/systemd/qswm-idle.service"
 
 cat > "$STAGE/install.sh" <<'INSTALLER'
 #!/bin/bash
@@ -29,7 +29,7 @@ sudo install -Dm755 "$DIR/libexec/idle-check.sh" /usr/local/libexec/qswm/idle-ch
 sudo install -Dm644 "$DIR/systemd/qswm.socket" /etc/systemd/system/qswm.socket
 sudo install -Dm644 "$DIR/systemd/qswm.service" /etc/systemd/system/qswm.service
 sudo install -Dm644 "$DIR/systemd/qswm-idle.timer" /etc/systemd/system/qswm-idle.timer
-sudo install -Dm644 "$DIR/systemd/qswm-idle-check.service" /etc/systemd/system/qswm-idle-check.service
+sudo install -Dm644 "$DIR/systemd/qswm-idle.service" /etc/systemd/system/qswm-idle.service
 sudo install -d /etc/qswm/conf.d
 sudo systemctl daemon-reload
 echo "Installed. Enable with: sudo systemctl enable --now qswm.socket qswm-idle.timer"

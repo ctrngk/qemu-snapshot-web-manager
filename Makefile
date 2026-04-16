@@ -47,7 +47,7 @@ install: all
 	install -Dm644 systemd/qswm.socket /etc/systemd/system/qswm.socket
 	install -Dm644 systemd/qswm.service /etc/systemd/system/qswm.service
 	install -Dm644 systemd/qswm-idle.timer /etc/systemd/system/qswm-idle.timer
-	install -Dm644 systemd/qswm-idle-check.service /etc/systemd/system/qswm-idle-check.service
+	install -Dm644 systemd/qswm-idle.service /etc/systemd/system/qswm-idle.service
 	systemctl daemon-reload
 	@echo ""
 	@echo "Installed. Enable socket activation with:"
@@ -63,6 +63,7 @@ uninstall:
 	rm -f /etc/systemd/system/qswm.service
 	rm -f /etc/systemd/system/qswm-idle.timer
 	rm -f /etc/systemd/system/qswm-idle-check.service
+	rm -f /etc/systemd/system/qswm-idle.service
 	systemctl daemon-reload
 	@echo "Uninstalled."
 

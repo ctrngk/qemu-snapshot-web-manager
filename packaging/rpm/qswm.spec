@@ -31,7 +31,7 @@ install -Dm755 scripts/idle-check.sh %{buildroot}/usr/local/libexec/qswm/idle-ch
 install -Dm644 systemd/qswm.socket %{buildroot}/etc/systemd/system/qswm.socket
 install -Dm644 systemd/qswm.service %{buildroot}/etc/systemd/system/qswm.service
 install -Dm644 systemd/qswm-idle.timer %{buildroot}/etc/systemd/system/qswm-idle.timer
-install -Dm644 systemd/qswm-idle-check.service %{buildroot}/etc/systemd/system/qswm-idle-check.service
+install -Dm644 systemd/qswm-idle.service %{buildroot}/etc/systemd/system/qswm-idle.service
 install -d %{buildroot}/etc/qswm/conf.d
 
 %post
@@ -52,7 +52,7 @@ systemctl daemon-reload
 /etc/systemd/system/qswm.socket
 /etc/systemd/system/qswm.service
 /etc/systemd/system/qswm-idle.timer
-/etc/systemd/system/qswm-idle-check.service
+/etc/systemd/system/qswm-idle.service
 %dir /etc/qswm
 %dir /etc/qswm/conf.d
 

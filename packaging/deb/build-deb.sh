@@ -19,7 +19,7 @@ install -Dm755 scripts/idle-check.sh "$STAGE/usr/local/libexec/qswm/idle-check.s
 install -Dm644 systemd/qswm.socket "$STAGE/etc/systemd/system/qswm.socket"
 install -Dm644 systemd/qswm.service "$STAGE/etc/systemd/system/qswm.service"
 install -Dm644 systemd/qswm-idle.timer "$STAGE/etc/systemd/system/qswm-idle.timer"
-install -Dm644 systemd/qswm-idle-check.service "$STAGE/etc/systemd/system/qswm-idle-check.service"
+install -Dm644 systemd/qswm-idle.service "$STAGE/etc/systemd/system/qswm-idle.service"
 install -d "$STAGE/etc/qswm/conf.d"
 
 # DEBIAN control
