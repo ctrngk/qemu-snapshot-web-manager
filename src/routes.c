@@ -1345,15 +1345,15 @@ static enum MHD_Result handle_browse_dir(struct MHD_Connection *conn,
                                           const char *path)
 {
     if (!path || path[0] != '/') {
-        /* Default to the real user's home when running under sudo */
+        /* Default to the real user's home when running under sudo,
+         * otherwise fall back to /home for systemd service context */
         const char *sudo_user = getenv("SUDO_USER");
         if (sudo_user) {
             static char home_buf[PATH_MAX];
             snprintf(home_buf, sizeof(home_buf), "/home/%s", sudo_user);
             path = home_buf;
         } else {
-            const char *home = getenv("HOME");
-            path = (home && home[0] == '/') ? home : "/home";
+            path = "/home";
         }
     }
 

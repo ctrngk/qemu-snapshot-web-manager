@@ -11,12 +11,11 @@ ExecStart=/usr/local/bin/qswm --static-dir /usr/local/share/qswm/static
 Restart=on-failure
 RestartSec=5
 User=root
-Environment=HOME=/root
 
 # Security hardening
 ProtectSystem=strict
 ReadWritePaths=/var/lib/libvirt
-ProtectHome=yes
+ProtectHome=read-only
 NoNewPrivileges=no
 PrivateTmp=yes
 
