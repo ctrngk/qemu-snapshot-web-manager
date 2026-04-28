@@ -59,4 +59,24 @@ void snapshot_tree_add_current_state(snapshot_node_t *root,
                                      const char *vm_state_str,
                                      int is_dirty);
 
+/*
+ * Build a snapshot tree from flat parallel arrays (used in tests and as the
+ * canonical parent-resolution algorithm that lv_list_snapshots delegates to).
+ *
+ * count          : number of snapshots
+ * ids            : snapshot name for each entry
+ * api_parent_ids : parent name returned by virDomainSnapshotGetParent()
+ *                  (may be NULL when libvirt fails to resolve the parent)
+ * xml_parent_ids : parent name parsed from the snapshot XML <parent> element
+ *                  (more reliable; used as fallback when api_parent_ids[i]==NULL)
+ *
+ * Returns the root node of the built tree, or NULL if count == 0.
+ * All nodes are owned by the returned tree; free with snapshot_tree_free().
+ */
+snapshot_node_t *snapshot_tree_build_from_flat(
+    int count,
+    const char * const *ids,
+    const char * const *api_parent_ids,
+    const char * const *xml_parent_ids);
+
 #endif

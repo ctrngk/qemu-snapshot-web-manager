@@ -161,6 +161,87 @@ static void test_many_children(void)
     printf("  PASS: test_many_children\n");
 }
 
+/*
+ * Test 8: Regression — wrong parent when virDomainSnapshotGetParent() fails.
+ *
+ * Real-world failure: snapshot "test-purpose-on-usb-fedora" appeared under
+ * "freshly-updated" instead of its true parent "add-shared-folder".
+ *
+ * Root cause: lv_list_snapshots Phase 2 relies solely on
+ * virDomainSnapshotGetParent().  When that API call returns NULL (a transient
+ * libvirt error), the snapshot has no api_parent_id and falls into the
+ * "no parent → attach to root" branch, landing it directly under
+ * "freshly-updated" (the tree root) instead of "add-shared-folder".
+ *
+ * snapshot_tree_build_from_flat() exposes the same bug: it accepts both an
+ * api_parent_ids[] array (mirrors the unreliable API) and an xml_parent_ids[]
+ * array (mirrors the reliable XML <parent> element), but currently ignores
+ * xml_parent_ids entirely.  This test sets api_parent_ids[2] = NULL to
+ * simulate the API failure and asserts the correct parent — which the buggy
+ * implementation fails to produce.
+ *
+ * Expected hierarchy:
+ *   freshly-updated
+ *     └── add-shared-folder
+ *           └── test-purpose-on-usb-fedora   ← must be here, not at top level
+ */
+static void test_regression_wrong_parent_usb_fedora(void)
+{
+    /* The three snapshot names from the actual bug report */
+    const char *ids[3] = {
+        "freshly-updated",
+        "add-shared-folder",
+        "test-purpose-on-usb-fedora",
+    };
+
+    /*
+     * Simulate virDomainSnapshotGetParent() results.
+     * api_parent_ids[2] == NULL: the API call failed for
+     * "test-purpose-on-usb-fedora" even though a parent exists in XML.
+     */
+    const char *api_parent_ids[3] = {
+        NULL,               /* freshly-updated: genuine root */
+        "freshly-updated",  /* add-shared-folder: API returned correct parent */
+        NULL,               /* test-purpose-on-usb-fedora: API failure → NULL */
+    };
+
+    /*
+     * Simulate XML-parsed <parent> values — the reliable fallback.
+     * xml_parent_ids[2] carries the true parent "add-shared-folder".
+     */
+    const char *xml_parent_ids[3] = {
+        NULL,
+        "freshly-updated",
+        "add-shared-folder",  /* correct parent known from XML */
+    };
+
+    snapshot_node_t *root = snapshot_tree_build_from_flat(
+        3, ids, api_parent_ids, xml_parent_ids);
+
+    assert(root != NULL);
+    assert(strcmp(root->id, "freshly-updated") == 0);
+
+    snapshot_node_t *add = snapshot_tree_find(root, "add-shared-folder");
+    assert(add != NULL);
+
+    snapshot_node_t *usb = snapshot_tree_find(root, "test-purpose-on-usb-fedora");
+    assert(usb != NULL);
+
+    /*
+     * Core regression assertion: test-purpose-on-usb-fedora must be a child
+     * of add-shared-folder, NOT a direct child of freshly-updated.
+     *
+     * The buggy implementation ignores xml_parent_ids and treats the NULL
+     * api_parent_ids[2] as "no parent", so it wrongly attaches the node to
+     * the root.  This assert therefore FAILS against the current code.
+     */
+    assert(usb->parent == add);           /* must be under add-shared-folder */
+    assert(usb->parent != root);          /* must NOT be directly under root  */
+
+    snapshot_tree_free(root);
+    printf("  PASS: test_regression_wrong_parent_usb_fedora\n");
+}
+
 int main(void)
 {
     printf("Running snapshot tree tests...\n");
@@ -171,6 +252,7 @@ int main(void)
     test_tree_to_json();
     test_null_fields();
     test_many_children();
-    printf("All %d tests passed!\n", 7);
+    test_regression_wrong_parent_usb_fedora();
+    printf("All %d tests passed!\n", 8);
     return 0;
 }
