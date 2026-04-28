@@ -15,6 +15,7 @@
 static struct MHD_Daemon *daemon_handle;
 static const char        *g_static_dir;
 static const char        *g_libvirt_uri;
+static int                g_socket_activated;
 
 static atomic_long last_request_time;
 
@@ -217,7 +218,7 @@ int server_start(int port, const char *static_dir, const char *libvirt_uri)
     routes_init();
 
     daemon_handle = MHD_start_daemon(
-        MHD_USE_INTERNAL_POLLING_THREAD,
+        MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ITC,
         (uint16_t)port,
         NULL, NULL,             /* accept policy callback */
         &request_handler, NULL, /* access handler + extra arg */
@@ -229,6 +230,7 @@ int server_start(int port, const char *static_dir, const char *libvirt_uri)
         return -1;
     }
 
+    g_socket_activated = 0;
     log_msg(LOG_INFO, "HTTP server listening on port %d", port);
     return 0;
 }
@@ -256,7 +258,7 @@ int server_start_fd(int fd, const char *static_dir, const char *libvirt_uri)
     routes_init();
 
     daemon_handle = MHD_start_daemon(
-        MHD_USE_INTERNAL_POLLING_THREAD,
+        MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ITC,
         0,                               /* port ignored when using LISTEN_SOCKET */
         NULL, NULL,
         &request_handler, NULL,
@@ -269,6 +271,7 @@ int server_start_fd(int fd, const char *static_dir, const char *libvirt_uri)
         return -1;
     }
 
+    g_socket_activated = 1;
     log_msg(LOG_INFO, "HTTP server started (socket-activated, fd %d)", fd);
     return 0;
 }
@@ -276,8 +279,15 @@ int server_start_fd(int fd, const char *static_dir, const char *libvirt_uri)
 void server_stop(void)
 {
     if (daemon_handle) {
+        if (g_socket_activated) {
+            MHD_socket listen_fd = MHD_quiesce_daemon(daemon_handle);
+            if (MHD_INVALID_SOCKET == listen_fd) {
+                log_msg(LOG_WARN, "Failed to quiesce socket-activated listener before shutdown");
+            }
+        }
         MHD_stop_daemon(daemon_handle);
         daemon_handle = NULL;
+        g_socket_activated = 0;
         log_msg(LOG_INFO, "HTTP server stopped");
     }
 }

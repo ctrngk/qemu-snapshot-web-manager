@@ -67,8 +67,9 @@ uninstall:
 	systemctl daemon-reload
 	@echo "Uninstalled."
 
-test:
-	@for t in tests/*.c; do \
+test: $(OBJS) | $(BUILDDIR)
+	@set -e; \
+	for t in tests/*.c; do \
 		[ -f "$$t" ] || continue; \
 		name=$$(basename "$$t" .c); \
 		echo "=== Building test: $$name ==="; \

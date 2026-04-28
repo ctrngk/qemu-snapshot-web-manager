@@ -398,6 +398,8 @@ If your VM's current state has changed since the last snapshot (e.g., you instal
 - **💾 Save & Revert** — Automatically creates a backup snapshot (named `pre-revert-YYYYMMDD-HHMMSS`) before reverting. This way you can always go back if needed.
 - **↩ Revert Without Saving** — Discards all changes since the target snapshot. This cannot be undone.
 
+For shut-off VMs, QSWM remembers that modified state across service restarts and host reboots.
+
 If your VM state matches the current snapshot exactly, the revert happens immediately without this prompt.
 
 <!-- Screenshot: Revert confirmation dialog -->

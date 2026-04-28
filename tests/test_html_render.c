@@ -42,19 +42,19 @@ static void test_render_snapshot_detail(void)
         .child_count = 0, .child_capacity = 0
     };
 
-    char *html = render_snapshot_detail("testvm", &snap);
+    char *html = render_snapshot_detail("testvm", &snap, VM_SHUTOFF);
     assert(html != NULL);
     assert(strstr(html, "snap1") != NULL);
     assert(strstr(html, "Test snapshot") != NULL);
     assert(strstr(html, "badge-internal") != NULL);
     assert(strstr(html, "Current") != NULL);
-    assert(strstr(html, "hx-post") != NULL);
+    assert(strstr(html, "hx-get=\"/api/vms/testvm/snapshots/snap1/revert-confirm\"") != NULL);
     assert(strstr(html, "hx-delete") != NULL);
     assert(strstr(html, "/api/vms/testvm/snapshots/snap1/revert") != NULL);
     free(html);
 
     /* Test with NULL snap */
-    char *null_html = render_snapshot_detail("testvm", NULL);
+    char *null_html = render_snapshot_detail("testvm", NULL, VM_SHUTOFF);
     assert(null_html != NULL);
     assert(strstr(null_html, "not found") != NULL);
     free(null_html);
@@ -66,7 +66,7 @@ static void test_render_snapshot_detail(void)
         .parent = NULL, .children = NULL,
         .child_count = 0, .child_capacity = 0
     };
-    char *ext_html = render_snapshot_detail("testvm", &ext_snap);
+    char *ext_html = render_snapshot_detail("testvm", &ext_snap, VM_SHUTOFF);
     assert(strstr(ext_html, "badge-external") != NULL);
     assert(strstr(ext_html, "Merge") != NULL);
     free(ext_html);
@@ -76,7 +76,7 @@ static void test_render_snapshot_detail(void)
 
 static void test_render_create_form(void)
 {
-    char *html = render_create_snapshot_form("testvm");
+    char *html = render_create_snapshot_form("testvm", 1);
     assert(html != NULL);
     assert(strstr(html, "hx-post=\"/api/vms/testvm/snapshots\"") != NULL);
     assert(strstr(html, "name=\"name\"") != NULL);

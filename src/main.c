@@ -8,6 +8,7 @@
 #include "config.h"
 #include "libvirt_backend.h"
 #include "vm_backend.h"
+#include "dirty_state.h"
 
 #include "server.h"
 
@@ -96,6 +97,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (dirty_state_init(DIRTY_STATE_DEFAULT_PATH) != 0) {
+        log_msg(LOG_WARN, "Dirty state persistence unavailable; continuing with empty state");
+    }
+
     /* Try socket activation first */
     int act_fd = server_check_activation();
     int rc;
@@ -119,6 +124,7 @@ int main(int argc, char *argv[])
 
     log_msg(LOG_INFO, "Shutting down...");
     server_stop();
+    dirty_state_shutdown();
 
     vm_backend_t *be2 = backend_get();
     if (be2) be2->disconnect();

@@ -13,83 +13,16 @@
 #include "util.h"
 #include "snapshot.h"
 #include "vm_backend.h"
+#include "dirty_state.h"
 #include "html_render.h"
 
 /* ------------------------------------------------------------------ */
 /*  request context for POST body accumulation                        */
 /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/*  Per-VM dirty state tracking (in-memory)                           */
-/*  After revert or create-snapshot → clean.                          */
-/*  When VM is detected running → dirty.                              */
-/*  Default for unknown shut-off VMs → clean.                         */
-/* ------------------------------------------------------------------ */
-
-#define MAX_TRACKED_VMS 128
-
-static struct {
-    char name[256];
-    int  is_clean;   /* 1 = state matches a snapshot, 0 = diverged */
-} vm_dirty_table[MAX_TRACKED_VMS];
-static int vm_dirty_count = 0;
-
-static void vm_mark_clean(const char *name)
-{
-    for (int i = 0; i < vm_dirty_count; i++) {
-        if (strcmp(vm_dirty_table[i].name, name) == 0) {
-            vm_dirty_table[i].is_clean = 1;
-            return;
-        }
-    }
-    if (vm_dirty_count < MAX_TRACKED_VMS) {
-        snprintf(vm_dirty_table[vm_dirty_count].name,
-                 sizeof(vm_dirty_table[0].name), "%s", name);
-        vm_dirty_table[vm_dirty_count].is_clean = 1;
-        vm_dirty_count++;
-    }
-}
-
-static void vm_mark_dirty(const char *name)
-{
-    for (int i = 0; i < vm_dirty_count; i++) {
-        if (strcmp(vm_dirty_table[i].name, name) == 0) {
-            vm_dirty_table[i].is_clean = 0;
-            return;
-        }
-    }
-    if (vm_dirty_count < MAX_TRACKED_VMS) {
-        snprintf(vm_dirty_table[vm_dirty_count].name,
-                 sizeof(vm_dirty_table[0].name), "%s", name);
-        vm_dirty_table[vm_dirty_count].is_clean = 0;
-        vm_dirty_count++;
-    }
-}
-
-/* Returns 1 if VM state has diverged from last snapshot. */
 static int vm_is_dirty(const char *name, vm_state_t state)
 {
-    /* Running VMs are always dirty — actively accumulating changes */
-    if (state == VM_RUNNING) {
-        vm_mark_dirty(name);
-        return 1;
-    }
-
-    /* Paused and shut-off VMs: check tracking table.
-     * Paused VMs are not accumulating changes, so respect clean markers
-     * (e.g., right after taking a snapshot while paused). */
-    for (int i = 0; i < vm_dirty_count; i++) {
-        if (strcmp(vm_dirty_table[i].name, name) == 0)
-            return !vm_dirty_table[i].is_clean;
-    }
-
-    /* Not in table: paused VMs are dirty (state diverged from last snapshot),
-     * shut-off VMs are clean (never started since server boot) */
-    if (state == VM_PAUSED) {
-        vm_mark_dirty(name);
-        return 1;
-    }
-    return 0;
+    return dirty_state_is_dirty(name, state);
 }
 
 /* ------------------------------------------------------------------ */
@@ -591,7 +524,7 @@ static enum MHD_Result handle_create_snapshot(struct MHD_Connection *conn,
     }
     char *html = render_success("Snapshot created");
     /* Creating a snapshot captures the current state — mark clean */
-    vm_mark_clean(vm_name);
+    dirty_state_mark_clean(vm_name);
     enum MHD_Result ret = send_html_trigger(conn, MHD_HTTP_OK, html, "vmStateChanged");
     free(html);
     return ret;
@@ -949,7 +882,7 @@ static enum MHD_Result handle_revert_snapshot(struct MHD_Connection *conn,
     }
 
     /* Mark VM as clean — state now matches the snapshot */
-    vm_mark_clean(vm_name);
+    dirty_state_mark_clean(vm_name);
 
     char msg[256];
     if (save && str_eq(save, "1"))

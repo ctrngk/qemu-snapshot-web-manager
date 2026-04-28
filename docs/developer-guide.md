@@ -1019,13 +1019,13 @@ VM selection, every 5 minutes, and on `vmStateChanged`. Returns empty HTML when 
 
 ### Dirty State Tracking
 
-`vm_is_dirty()` in `routes.c` determines if the VM has unsaved changes since the last snapshot:
+`dirty_state_is_dirty()` in `dirty_state.c` determines if the VM has unsaved changes since the last snapshot:
 
 - **Running VMs:** Always dirty (state changes continuously)
 - **Paused VMs:** Check tracking table; default to dirty if not tracked
 - **Shut-off VMs:** Check tracking table; default to clean if not tracked
 
-The tracking table is updated after snapshot creation to mark the VM as clean.
+The tracking table is persisted to `/var/lib/libvirt/qswm/dirty-state.json`, so shut-off VMs that were marked dirty stay dirty across qswm restarts and host reboots. Snapshot creation and revert update the table to mark the VM as clean.
 
 ---
 
