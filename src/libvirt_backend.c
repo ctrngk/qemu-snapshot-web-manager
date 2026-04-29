@@ -125,6 +125,20 @@ static char *unix_to_iso(const char *unix_str)
     return str_dup(buf);
 }
 
+static char *extract_snapshot_parent_name(const char *xml)
+{
+    if (!xml)
+        return NULL;
+
+    char *parent_xml = extract_xml_content_ext(xml, "parent");
+    if (!parent_xml)
+        return NULL;
+
+    char *parent_name = extract_xml_content(parent_xml, "name");
+    free(parent_xml);
+    return parent_name;
+}
+
 /* ------------------------------------------------------------------ */
 /*  mutex helpers                                                     */
 /* ------------------------------------------------------------------ */
@@ -364,9 +378,11 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
     /* Temporary arrays for building the tree */
     snapshot_node_t **nodes = calloc((size_t)n, sizeof(snapshot_node_t *));
     virDomainSnapshotPtr *snap_ptrs = calloc((size_t)n, sizeof(virDomainSnapshotPtr));
-    if (!nodes || !snap_ptrs) {
+    char **xml_parent_names = calloc((size_t)n, sizeof(char *));
+    if (!nodes || !snap_ptrs || !xml_parent_names) {
         free(nodes);
         free(snap_ptrs);
+        free(xml_parent_names);
         free(current_name);
         for (int i = 0; i < n; i++)
             virDomainSnapshotFree(snaps[i]);
@@ -384,6 +400,7 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
         char *desc = xml ? extract_xml_content(xml, "description") : NULL;
         char *ctime_str = xml ? extract_xml_content(xml, "creationTime") : NULL;
         char *iso_time = ctime_str ? unix_to_iso(ctime_str) : str_dup("");
+        xml_parent_names[i] = extract_snapshot_parent_name(xml);
 
         /* Detect snapshot type from XML */
         snap_type_t stype = SNAP_INTERNAL;
@@ -412,23 +429,42 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
     for (int i = 0; i < n; i++) {
         virDomainSnapshotPtr parent_snap =
             virDomainSnapshotGetParent(snap_ptrs[i], 0);
+        const char *parent_name = NULL;
+        int attached = 0;
 
-        if (parent_snap) {
-            const char *parent_name = virDomainSnapshotGetName(parent_snap);
-            /* Find matching node */
+        if (parent_snap)
+            parent_name = virDomainSnapshotGetName(parent_snap);
+
+        if (parent_name) {
             for (int j = 0; j < n; j++) {
-                if (nodes[j] && str_eq(nodes[j]->id, parent_name)) {
+                if (j != i && nodes[j] && str_eq(nodes[j]->id, parent_name)) {
                     snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
                     break;
                 }
             }
+        }
+
+        if (!attached && xml_parent_names[i] &&
+            (!parent_name || !str_eq(xml_parent_names[i], parent_name))) {
+            for (int j = 0; j < n; j++) {
+                if (j != i && nodes[j] && str_eq(nodes[j]->id, xml_parent_names[i])) {
+                    snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
+                    break;
+                }
+            }
+        }
+
+        if (parent_snap)
             virDomainSnapshotFree(parent_snap);
-        } else {
-            /* No parent — this is a root node */
+
+        if (!attached) {
+            /* No usable parent found — keep the node reachable. */
             if (!root) {
                 root = nodes[i];
             } else {
-                /* Multiple roots: attach to existing root */
+                /* Multiple roots or unresolved parent: attach to existing root. */
                 snapshot_node_add_child(root, nodes[i]);
             }
         }
@@ -437,6 +473,9 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
     /* Clean up libvirt handles */
     for (int i = 0; i < n; i++)
         virDomainSnapshotFree(snap_ptrs[i]);
+    for (int i = 0; i < n; i++)
+        free(xml_parent_names[i]);
+    free(xml_parent_names);
     free(snap_ptrs);
     free(snaps);
     free(nodes);

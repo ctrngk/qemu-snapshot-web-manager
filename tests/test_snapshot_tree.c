@@ -163,26 +163,10 @@ static void test_many_children(void)
 
 /*
  * Static test helper: approximates lv_list_snapshots Phase 2 parent-wiring
- * logic, but intentionally diverges in one case.
- *
- * Shared behaviour with Phase 2:
- *   - A non-NULL api_parent_ids[i] that matches a known node → child of that
- *     node.
- *   - A NULL api_parent_ids[i] → treated as "no parent" and falls into the
- *     root/fallback branch below.
- *
- * Intentional divergence (the bug under test):
- *   - xml_parent_ids is ignored entirely.  When api_parent_ids[i] is NULL the
- *     node lands under the tree root rather than using the XML <parent> as a
- *     fallback — the same defect that caused test-purpose-on-usb-fedora to
- *     appear under freshly-updated.  Task 2 will fix this by falling back to
- *     xml_parent_ids.
- *
- * Second divergence from post-leak-prevention production code:
- *   - In production, a non-NULL api_parent_ids[i] whose target node is not
- *     found leaves the node unattached (no leak).  Here, such a node still
- *     falls into the root/fallback branch.  This does not affect the
- *     regression being tested, which only exercises the NULL-api-parent path.
+ * logic without depending on libvirt.  It first uses the parent returned by
+ * virDomainSnapshotGetParent(), falls back to the XML <parent><name> value
+ * when the API result is NULL or does not match a known node, and finally
+ * attaches unresolved nodes to the root so they remain reachable.
  */
 static snapshot_node_t *build_from_flat(
     int count,
@@ -190,8 +174,6 @@ static snapshot_node_t *build_from_flat(
     const char * const *api_parent_ids,
     const char * const *xml_parent_ids)
 {
-    (void)xml_parent_ids; /* BUG: fallback source intentionally unused */
-
     if (count <= 0 || !ids)
         return NULL;
 
@@ -204,23 +186,33 @@ static snapshot_node_t *build_from_flat(
 
     snapshot_node_t *root = NULL;
     for (int i = 0; i < count; i++) {
-        const char *pid = api_parent_ids ? api_parent_ids[i] : NULL;
+        const char *api_pid = api_parent_ids ? api_parent_ids[i] : NULL;
+        const char *xml_pid = xml_parent_ids ? xml_parent_ids[i] : NULL;
         int attached = 0;
-        if (pid) {
+        if (api_pid) {
             for (int j = 0; j < count; j++) {
-                if (nodes[j] && strcmp(nodes[j]->id, pid) == 0) {
+                if (j != i && nodes[j] && strcmp(nodes[j]->id, api_pid) == 0) {
                     snapshot_node_add_child(nodes[j], nodes[i]);
                     attached = 1;
                     break;
                 }
             }
         }
-        /* No parent ID or no matching node found — fall through to root logic */
+        if (!attached && xml_pid && (!api_pid || strcmp(xml_pid, api_pid) != 0)) {
+            for (int j = 0; j < count; j++) {
+                if (j != i && nodes[j] && strcmp(nodes[j]->id, xml_pid) == 0) {
+                    snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
+                    break;
+                }
+            }
+        }
+        /* No usable parent ID or no matching node found: keep node reachable. */
         if (!attached) {
             if (!root)
                 root = nodes[i];
-            else
-                snapshot_node_add_child(root, nodes[i]); /* wrong attachment */
+            else if (root != nodes[i])
+                snapshot_node_add_child(root, nodes[i]);
         }
     }
 
@@ -240,9 +232,9 @@ static snapshot_node_t *build_from_flat(
  * "no parent → attach to root" branch, landing it under the tree root
  * instead of its true parent "add-shared-folder".
  *
- * build_from_flat() (above) reproduces the same gap entirely within this test
- * file.  This test sets api_parent_ids[2] = NULL to simulate the API failure
- * and asserts the correct parent — which the buggy helper fails to produce.
+ * build_from_flat() (above) models the fixed parent selection entirely within
+ * this test file.  This test sets api_parent_ids[2] = NULL to simulate the API
+ * failure and asserts that xml_parent_ids[2] preserves the correct hierarchy.
  *
  * Expected hierarchy:
  *   freshly-updated
@@ -287,15 +279,46 @@ static void test_regression_wrong_parent_usb_fedora(void)
      * Core regression assertion: test-purpose-on-usb-fedora must be a child
      * of add-shared-folder, NOT a direct child of freshly-updated.
      *
-     * The buggy implementation ignores xml_parent_ids and treats the NULL
-     * api_parent_ids[2] as "no parent", so it wrongly attaches the node to
-     * the root.  This assert therefore FAILS against the current code.
+     * The fixed implementation falls back to xml_parent_ids[2] and keeps the
+     * new snapshot under add-shared-folder.
      */
     assert(usb->parent == add);           /* must be under add-shared-folder */
     assert(usb->parent != root);          /* must NOT be directly under root  */
 
     snapshot_tree_free(root);
     printf("  PASS: test_regression_wrong_parent_usb_fedora\n");
+}
+
+/* Test 9: Regression — unresolved API parent still uses XML fallback. */
+static void test_regression_unmatched_api_parent_uses_xml_fallback(void)
+{
+    const char *ids[2] = {
+        "base",
+        "child",
+    };
+
+    const char *api_parent_ids[2] = {
+        NULL,
+        "missing-from-list",
+    };
+
+    const char *xml_parent_ids[2] = {
+        NULL,
+        "base",
+    };
+
+    snapshot_node_t *root = build_from_flat(
+        2, ids, api_parent_ids, xml_parent_ids);
+
+    assert(root != NULL);
+    assert(strcmp(root->id, "base") == 0);
+
+    snapshot_node_t *child = snapshot_tree_find(root, "child");
+    assert(child != NULL);
+    assert(child->parent == root);
+
+    snapshot_tree_free(root);
+    printf("  PASS: test_regression_unmatched_api_parent_uses_xml_fallback\n");
 }
 
 int main(void)
@@ -309,6 +332,7 @@ int main(void)
     test_null_fields();
     test_many_children();
     test_regression_wrong_parent_usb_fedora();
-    printf("All %d tests passed!\n", 8);
+    test_regression_unmatched_api_parent_uses_xml_fallback();
+    printf("All %d tests passed!\n", 9);
     return 0;
 }
