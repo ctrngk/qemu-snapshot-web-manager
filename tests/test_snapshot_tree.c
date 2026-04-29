@@ -162,12 +162,27 @@ static void test_many_children(void)
 }
 
 /*
- * Static test helper: mirrors lv_list_snapshots Phase 2 parent-wiring logic.
+ * Static test helper: approximates lv_list_snapshots Phase 2 parent-wiring
+ * logic, but intentionally diverges in one case.
  *
- * BUG (intentional): xml_parent_ids is ignored.  When api_parent_ids[i] is
- * NULL the node falls into the "no parent → attach to root" branch — the same
- * defect that caused test-purpose-on-usb-fedora to appear under
- * freshly-updated.  Task 2 will fix this by falling back to xml_parent_ids.
+ * Shared behaviour with Phase 2:
+ *   - A non-NULL api_parent_ids[i] that matches a known node → child of that
+ *     node.
+ *   - A NULL api_parent_ids[i] → treated as "no parent" and falls into the
+ *     root/fallback branch below.
+ *
+ * Intentional divergence (the bug under test):
+ *   - xml_parent_ids is ignored entirely.  When api_parent_ids[i] is NULL the
+ *     node lands under the tree root rather than using the XML <parent> as a
+ *     fallback — the same defect that caused test-purpose-on-usb-fedora to
+ *     appear under freshly-updated.  Task 2 will fix this by falling back to
+ *     xml_parent_ids.
+ *
+ * Second divergence from post-leak-prevention production code:
+ *   - In production, a non-NULL api_parent_ids[i] whose target node is not
+ *     found leaves the node unattached (no leak).  Here, such a node still
+ *     falls into the root/fallback branch.  This does not affect the
+ *     regression being tested, which only exercises the NULL-api-parent path.
  */
 static snapshot_node_t *build_from_flat(
     int count,
