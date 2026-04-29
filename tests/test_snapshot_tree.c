@@ -163,10 +163,9 @@ static void test_many_children(void)
 
 /*
  * Static test helper: approximates lv_list_snapshots Phase 2 parent-wiring
- * logic without depending on libvirt.  It first uses the parent returned by
- * virDomainSnapshotGetParent(), falls back to the XML <parent><name> value
- * when the API result is NULL or does not match a known node, and finally
- * attaches unresolved nodes to the root so they remain reachable.
+ * logic without depending on libvirt.  It uses the XML <parent><name> value
+ * from snapshot-dumpxml and attaches unresolved nodes to the root so they
+ * remain reachable.
  */
 static snapshot_node_t *build_from_flat(
     int count,
@@ -174,6 +173,8 @@ static snapshot_node_t *build_from_flat(
     const char * const *api_parent_ids,
     const char * const *xml_parent_ids)
 {
+    (void)api_parent_ids;
+
     if (count <= 0 || !ids)
         return NULL;
 
@@ -186,19 +187,9 @@ static snapshot_node_t *build_from_flat(
 
     snapshot_node_t *root = NULL;
     for (int i = 0; i < count; i++) {
-        const char *api_pid = api_parent_ids ? api_parent_ids[i] : NULL;
         const char *xml_pid = xml_parent_ids ? xml_parent_ids[i] : NULL;
         int attached = 0;
-        if (api_pid) {
-            for (int j = 0; j < count; j++) {
-                if (j != i && nodes[j] && strcmp(nodes[j]->id, api_pid) == 0) {
-                    snapshot_node_add_child(nodes[j], nodes[i]);
-                    attached = 1;
-                    break;
-                }
-            }
-        }
-        if (!attached && xml_pid && (!api_pid || strcmp(xml_pid, api_pid) != 0)) {
+        if (xml_pid) {
             for (int j = 0; j < count; j++) {
                 if (j != i && nodes[j] && strcmp(nodes[j]->id, xml_pid) == 0) {
                     snapshot_node_add_child(nodes[j], nodes[i]);
@@ -228,13 +219,13 @@ static snapshot_node_t *build_from_flat(
  *
  * Root cause: lv_list_snapshots Phase 2 relies solely on
  * virDomainSnapshotGetParent().  When that API call returns NULL (a transient
- * libvirt error), the snapshot has no api_parent_id and falls into the
- * "no parent → attach to root" branch, landing it under the tree root
- * instead of its true parent "add-shared-folder".
+ * libvirt error), older tree assembly treated the snapshot as parentless and
+ * attached it under the tree root instead of its true parent
+ * "add-shared-folder".
  *
  * build_from_flat() (above) models the fixed parent selection entirely within
- * this test file.  This test sets api_parent_ids[2] = NULL to simulate the API
- * failure and asserts that xml_parent_ids[2] preserves the correct hierarchy.
+ * this test file.  It asserts that xml_parent_ids[2] preserves the correct
+ * hierarchy even when api_parent_ids[2] is NULL.
  *
  * Expected hierarchy:
  *   freshly-updated

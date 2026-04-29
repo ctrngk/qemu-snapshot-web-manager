@@ -139,6 +139,42 @@ static char *extract_snapshot_parent_name(const char *xml)
     return parent_name;
 }
 
+static char *xml_escape_text(const char *src)
+{
+    if (!src)
+        src = "";
+
+    size_t len = 0;
+    for (const char *p = src; *p; p++) {
+        switch (*p) {
+        case '&':  len += 5; break;  /* &amp; */
+        case '<':  len += 4; break;  /* &lt; */
+        case '>':  len += 4; break;  /* &gt; */
+        case '"':  len += 6; break;  /* &quot; */
+        case '\'': len += 6; break;  /* &apos; */
+        default:   len += 1; break;
+        }
+    }
+
+    char *out = malloc(len + 1);
+    if (!out)
+        return NULL;
+
+    char *dst = out;
+    for (const char *p = src; *p; p++) {
+        switch (*p) {
+        case '&':  memcpy(dst, "&amp;", 5); dst += 5; break;
+        case '<':  memcpy(dst, "&lt;", 4); dst += 4; break;
+        case '>':  memcpy(dst, "&gt;", 4); dst += 4; break;
+        case '"':  memcpy(dst, "&quot;", 6); dst += 6; break;
+        case '\'': memcpy(dst, "&apos;", 6); dst += 6; break;
+        default:   *dst++ = *p; break;
+        }
+    }
+    *dst = '\0';
+    return out;
+}
+
 /* ------------------------------------------------------------------ */
 /*  mutex helpers                                                     */
 /* ------------------------------------------------------------------ */
@@ -427,13 +463,8 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
     /* Phase 2: build parent-child relationships */
     snapshot_node_t *root = NULL;
     for (int i = 0; i < n; i++) {
-        virDomainSnapshotPtr parent_snap =
-            virDomainSnapshotGetParent(snap_ptrs[i], 0);
-        const char *parent_name = NULL;
+        const char *parent_name = xml_parent_names[i];
         int attached = 0;
-
-        if (parent_snap)
-            parent_name = virDomainSnapshotGetName(parent_snap);
 
         if (parent_name) {
             for (int j = 0; j < n; j++) {
@@ -444,20 +475,6 @@ static int lv_list_snapshots(const char *vm_name, snapshot_node_t **tree)
                 }
             }
         }
-
-        if (!attached && xml_parent_names[i] &&
-            (!parent_name || !str_eq(xml_parent_names[i], parent_name))) {
-            for (int j = 0; j < n; j++) {
-                if (j != i && nodes[j] && str_eq(nodes[j]->id, xml_parent_names[i])) {
-                    snapshot_node_add_child(nodes[j], nodes[i]);
-                    attached = 1;
-                    break;
-                }
-            }
-        }
-
-        if (parent_snap)
-            virDomainSnapshotFree(parent_snap);
 
         if (!attached) {
             /* No usable parent found — keep the node reachable. */
@@ -699,22 +716,77 @@ static int lv_create_snapshot(const char *vm_name, const char *snap_name,
     if (!dom) return -1;
     conn_unlock();
 
-    char xml[4096];
+    char *current_name = NULL;
+    virDomainSnapshotPtr cur = virDomainSnapshotCurrent(dom, 0);
+    if (cur) {
+        current_name = str_dup(virDomainSnapshotGetName(cur));
+        virDomainSnapshotFree(cur);
+    } else {
+        virResetLastError();
+    }
+
+    char *escaped_name = xml_escape_text(snap_name);
+    char *escaped_desc = xml_escape_text(description ? description : "");
+    char *escaped_parent = NULL;
+    int have_parent = current_name && !str_eq(current_name, snap_name);
+    if (have_parent)
+        escaped_parent = xml_escape_text(current_name);
+
+    if (!escaped_name || !escaped_desc || (have_parent && !escaped_parent)) {
+        free(current_name);
+        free(escaped_name);
+        free(escaped_desc);
+        free(escaped_parent);
+        virDomainFree(dom);
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to allocate snapshot XML");
+        return -1;
+    }
+
+    char *parent_xml = escaped_parent
+        ? str_fmt("<parent><name>%s</name></parent>", escaped_parent)
+        : str_dup("");
+    if (!parent_xml) {
+        free(current_name);
+        free(escaped_name);
+        free(escaped_desc);
+        free(escaped_parent);
+        virDomainFree(dom);
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to allocate snapshot XML");
+        return -1;
+    }
+
+    char *xml;
     if (type == SNAP_EXTERNAL) {
-        snprintf(xml, sizeof(xml),
+        xml = str_fmt(
             "<domainsnapshot>"
             "<name>%s</name>"
             "<description>%s</description>"
+            "%s"
             "<disks><disk name='vda' snapshot='external'/></disks>"
             "</domainsnapshot>",
-            snap_name, description ? description : "");
+            escaped_name, escaped_desc, parent_xml);
     } else {
-        snprintf(xml, sizeof(xml),
+        xml = str_fmt(
             "<domainsnapshot>"
             "<name>%s</name>"
             "<description>%s</description>"
+            "%s"
             "</domainsnapshot>",
-            snap_name, description ? description : "");
+            escaped_name, escaped_desc, parent_xml);
+    }
+    free(current_name);
+    free(escaped_name);
+    free(escaped_desc);
+    free(escaped_parent);
+    free(parent_xml);
+
+    if (!xml) {
+        virDomainFree(dom);
+        snprintf(lv_last_error, sizeof(lv_last_error),
+                 "Failed to allocate snapshot XML");
+        return -1;
     }
 
     unsigned int flags = (type == SNAP_EXTERNAL)
@@ -723,6 +795,7 @@ static int lv_create_snapshot(const char *vm_name, const char *snap_name,
         : 0;
 
     virDomainSnapshotPtr snap = virDomainSnapshotCreateXML(dom, xml, flags);
+    free(xml);
 
     if (!snap) {
         /* Save the libvirt error before virDomainFree clears it */
