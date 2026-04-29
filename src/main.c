@@ -28,8 +28,9 @@ static void print_usage(const char *prog)
            "  -p, --port PORT        Listen port (default: 9091)\n"
            "  -s, --static-dir DIR   Static file directory (default: ./static)\n"
            "  -u, --uri URI          Libvirt connection URI (default: qemu:///system)\n"
+           "      --dirty-state PATH  Dirty-state JSON path (default: %s)\n"
            "  -h, --help             Show this help message\n",
-           prog);
+           prog, DIRTY_STATE_DEFAULT_PATH);
 }
 
 int main(int argc, char *argv[])
@@ -46,7 +47,8 @@ int main(int argc, char *argv[])
         { "port",       required_argument, NULL, 'p' },
         { "static-dir", required_argument, NULL, 's' },
         { "uri",        required_argument, NULL, 'u' },
-        { "help",       no_argument,       NULL, 'h' },
+        { "dirty-state", required_argument, NULL, 1000 },
+        { "help",        no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
     };
 
@@ -65,6 +67,10 @@ int main(int argc, char *argv[])
             break;
         case 'u':
             libvirt_uri = optarg;
+            break;
+        case 1000:
+            snprintf(cfg.dirty_state_path, sizeof(cfg.dirty_state_path),
+                     "%s", optarg);
             break;
         case 'h':
             print_usage(argv[0]);
@@ -88,6 +94,7 @@ int main(int argc, char *argv[])
     log_msg(LOG_INFO, "  port:       %d", port);
     log_msg(LOG_INFO, "  static-dir: %s", static_dir);
     log_msg(LOG_INFO, "  uri:        %s", libvirt_uri);
+    log_msg(LOG_INFO, "  dirty-state: %s", cfg.dirty_state_path);
 
     /* Initialize libvirt backend */
     vm_backend_t *be = libvirt_backend_get();
@@ -97,7 +104,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (dirty_state_init(DIRTY_STATE_DEFAULT_PATH) != 0) {
+    if (dirty_state_init(cfg.dirty_state_path) != 0) {
         log_msg(LOG_WARN, "Dirty state persistence unavailable; continuing with empty state");
     }
 

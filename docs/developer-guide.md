@@ -1025,7 +1025,7 @@ VM selection, every 5 minutes, and on `vmStateChanged`. Returns empty HTML when 
 - **Paused VMs:** Check tracking table; default to dirty if not tracked
 - **Shut-off VMs:** Check tracking table; default to clean if not tracked
 
-The tracking table is persisted to `/var/lib/libvirt/qswm/dirty-state.json`, so shut-off VMs that were marked dirty stay dirty across qswm restarts and host reboots. Snapshot creation and revert update the table to mark the VM as clean.
+The tracking table is persisted to `dirty_state_path`, which defaults to `/var/lib/qswm/dirty-state.json`, so shut-off VMs that were marked dirty stay dirty across qswm restarts and host reboots. Snapshot creation and revert update the table to mark the VM as clean.
 
 ---
 

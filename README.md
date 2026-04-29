@@ -171,6 +171,7 @@ port = 8080
 idle_timeout = 300
 uri = qemu:///system
 static_dir = /usr/local/share/qswm/static
+dirty_state_path = /var/lib/qswm/dirty-state.json
 EOF
 ```
 
@@ -182,6 +183,7 @@ Files are read in alphabetical order; later files override earlier ones. CLI arg
 | `idle_timeout` | `600` | Seconds idle before auto-shutdown (0 = disabled) |
 | `uri` | `qemu:///system` | Libvirt connection URI |
 | `static_dir` | `/usr/local/share/qswm/static` | Path to static assets |
+| `dirty_state_path` | `/var/lib/qswm/dirty-state.json` | Path to persisted current-state dirty/clean metadata |
 
 ## Architecture
 

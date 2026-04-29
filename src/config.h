@@ -6,6 +6,7 @@ typedef struct {
     int         idle_timeout;   /* seconds, 0 = disabled */
     char        uri[256];
     char        static_dir[256];
+    char        dirty_state_path[256];
 } qswm_config_t;
 
 /* Fill cfg with compiled-in defaults */

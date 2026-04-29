@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dirty_state.h"
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,8 @@ void config_defaults(qswm_config_t *cfg)
     snprintf(cfg->uri, sizeof(cfg->uri), "qemu:///system");
     snprintf(cfg->static_dir, sizeof(cfg->static_dir),
              "/usr/local/share/qswm/static");
+    snprintf(cfg->dirty_state_path, sizeof(cfg->dirty_state_path),
+             DIRTY_STATE_DEFAULT_PATH);
 }
 
 void config_parse_line(qswm_config_t *cfg, const char *key, const char *value)
@@ -25,6 +28,9 @@ void config_parse_line(qswm_config_t *cfg, const char *key, const char *value)
         snprintf(cfg->uri, sizeof(cfg->uri), "%s", value);
     else if (strcmp(key, "static_dir") == 0)
         snprintf(cfg->static_dir, sizeof(cfg->static_dir), "%s", value);
+    else if (strcmp(key, "dirty_state_path") == 0)
+        snprintf(cfg->dirty_state_path, sizeof(cfg->dirty_state_path),
+                 "%s", value);
     /* unknown keys silently ignored */
 }
 

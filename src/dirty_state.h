@@ -3,7 +3,7 @@
 
 #include "vm_backend.h"
 
-#define DIRTY_STATE_DEFAULT_PATH "/var/lib/libvirt/qswm/dirty-state.json"
+#define DIRTY_STATE_DEFAULT_PATH "/var/lib/qswm/dirty-state.json"
 
 int dirty_state_init(const char *path);
 void dirty_state_shutdown(void);
