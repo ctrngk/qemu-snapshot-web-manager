@@ -190,14 +190,18 @@ static snapshot_node_t *build_from_flat(
     snapshot_node_t *root = NULL;
     for (int i = 0; i < count; i++) {
         const char *pid = api_parent_ids ? api_parent_ids[i] : NULL;
+        int attached = 0;
         if (pid) {
             for (int j = 0; j < count; j++) {
                 if (nodes[j] && strcmp(nodes[j]->id, pid) == 0) {
                     snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
                     break;
                 }
             }
-        } else {
+        }
+        /* No parent ID or no matching node found — fall through to root logic */
+        if (!attached) {
             if (!root)
                 root = nodes[i];
             else
