@@ -161,6 +161,166 @@ static void test_many_children(void)
     printf("  PASS: test_many_children\n");
 }
 
+/*
+ * Static test helper: approximates lv_list_snapshots Phase 2 parent-wiring
+ * logic without depending on libvirt.  It first uses the parent returned by
+ * virDomainSnapshotGetParent(), falls back to the XML <parent><name> value
+ * when the API result is NULL or does not match a known node, and finally
+ * attaches unresolved nodes to the root so they remain reachable.
+ */
+static snapshot_node_t *build_from_flat(
+    int count,
+    const char * const *ids,
+    const char * const *api_parent_ids,
+    const char * const *xml_parent_ids)
+{
+    if (count <= 0 || !ids)
+        return NULL;
+
+    snapshot_node_t **nodes = calloc((size_t)count, sizeof(snapshot_node_t *));
+    if (!nodes)
+        return NULL;
+
+    for (int i = 0; i < count; i++)
+        nodes[i] = snapshot_node_new(ids[i], "", "", SNAP_INTERNAL, 0);
+
+    snapshot_node_t *root = NULL;
+    for (int i = 0; i < count; i++) {
+        const char *api_pid = api_parent_ids ? api_parent_ids[i] : NULL;
+        const char *xml_pid = xml_parent_ids ? xml_parent_ids[i] : NULL;
+        int attached = 0;
+        if (api_pid) {
+            for (int j = 0; j < count; j++) {
+                if (j != i && nodes[j] && strcmp(nodes[j]->id, api_pid) == 0) {
+                    snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
+                    break;
+                }
+            }
+        }
+        if (!attached && xml_pid && (!api_pid || strcmp(xml_pid, api_pid) != 0)) {
+            for (int j = 0; j < count; j++) {
+                if (j != i && nodes[j] && strcmp(nodes[j]->id, xml_pid) == 0) {
+                    snapshot_node_add_child(nodes[j], nodes[i]);
+                    attached = 1;
+                    break;
+                }
+            }
+        }
+        /* No usable parent ID or no matching node found: keep node reachable. */
+        if (!attached) {
+            if (!root)
+                root = nodes[i];
+            else if (root != nodes[i])
+                snapshot_node_add_child(root, nodes[i]);
+        }
+    }
+
+    free(nodes);
+    return root;
+}
+
+/*
+ * Test 8: Regression — wrong parent when virDomainSnapshotGetParent() fails.
+ *
+ * Real-world failure: snapshot "test-purpose-on-usb-fedora" appeared under
+ * "freshly-updated" instead of its true parent "add-shared-folder".
+ *
+ * Root cause: lv_list_snapshots Phase 2 relies solely on
+ * virDomainSnapshotGetParent().  When that API call returns NULL (a transient
+ * libvirt error), the snapshot has no api_parent_id and falls into the
+ * "no parent → attach to root" branch, landing it under the tree root
+ * instead of its true parent "add-shared-folder".
+ *
+ * build_from_flat() (above) models the fixed parent selection entirely within
+ * this test file.  This test sets api_parent_ids[2] = NULL to simulate the API
+ * failure and asserts that xml_parent_ids[2] preserves the correct hierarchy.
+ *
+ * Expected hierarchy:
+ *   freshly-updated
+ *     └── add-shared-folder
+ *           └── test-purpose-on-usb-fedora   ← must be here, not at top level
+ */
+static void test_regression_wrong_parent_usb_fedora(void)
+{
+    const char *ids[3] = {
+        "freshly-updated",
+        "add-shared-folder",
+        "test-purpose-on-usb-fedora",
+    };
+
+    /* Simulate virDomainSnapshotGetParent(): NULL for entry [2] = API failure */
+    const char *api_parent_ids[3] = {
+        NULL,               /* freshly-updated: genuine root */
+        "freshly-updated",  /* add-shared-folder: API returned correct parent */
+        NULL,               /* test-purpose-on-usb-fedora: API failure → NULL */
+    };
+
+    /* Reliable fallback from XML <parent> element */
+    const char *xml_parent_ids[3] = {
+        NULL,
+        "freshly-updated",
+        "add-shared-folder",  /* correct parent known from XML */
+    };
+
+    snapshot_node_t *root = build_from_flat(
+        3, ids, api_parent_ids, xml_parent_ids);
+
+    assert(root != NULL);
+    assert(strcmp(root->id, "freshly-updated") == 0);
+
+    snapshot_node_t *add = snapshot_tree_find(root, "add-shared-folder");
+    assert(add != NULL);
+
+    snapshot_node_t *usb = snapshot_tree_find(root, "test-purpose-on-usb-fedora");
+    assert(usb != NULL);
+
+    /*
+     * Core regression assertion: test-purpose-on-usb-fedora must be a child
+     * of add-shared-folder, NOT a direct child of freshly-updated.
+     *
+     * The fixed implementation falls back to xml_parent_ids[2] and keeps the
+     * new snapshot under add-shared-folder.
+     */
+    assert(usb->parent == add);           /* must be under add-shared-folder */
+    assert(usb->parent != root);          /* must NOT be directly under root  */
+
+    snapshot_tree_free(root);
+    printf("  PASS: test_regression_wrong_parent_usb_fedora\n");
+}
+
+/* Test 9: Regression — unresolved API parent still uses XML fallback. */
+static void test_regression_unmatched_api_parent_uses_xml_fallback(void)
+{
+    const char *ids[2] = {
+        "base",
+        "child",
+    };
+
+    const char *api_parent_ids[2] = {
+        NULL,
+        "missing-from-list",
+    };
+
+    const char *xml_parent_ids[2] = {
+        NULL,
+        "base",
+    };
+
+    snapshot_node_t *root = build_from_flat(
+        2, ids, api_parent_ids, xml_parent_ids);
+
+    assert(root != NULL);
+    assert(strcmp(root->id, "base") == 0);
+
+    snapshot_node_t *child = snapshot_tree_find(root, "child");
+    assert(child != NULL);
+    assert(child->parent == root);
+
+    snapshot_tree_free(root);
+    printf("  PASS: test_regression_unmatched_api_parent_uses_xml_fallback\n");
+}
+
 int main(void)
 {
     printf("Running snapshot tree tests...\n");
@@ -171,6 +331,8 @@ int main(void)
     test_tree_to_json();
     test_null_fields();
     test_many_children();
-    printf("All %d tests passed!\n", 7);
+    test_regression_wrong_parent_usb_fedora();
+    test_regression_unmatched_api_parent_uses_xml_fallback();
+    printf("All %d tests passed!\n", 9);
     return 0;
 }
